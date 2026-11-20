@@ -6,7 +6,7 @@ Pay Sentinel checks flagged student payments and the chat messages behind them. 
 instantly**, **risky peer transfers pause for the student to confirm**, and **likely scams go to support staff with a
 full decision log**. **No wallet is ever frozen.**
 
-- **Live app:** `<paste your *.streamlit.app link here>`
+- **Live app:** `https://pay-sentinel-techx.streamlit.app`
 - **Demo login:** support-staff ID `SUP-01` (the password is in our Round 1 submission)
 
 ## What it does
