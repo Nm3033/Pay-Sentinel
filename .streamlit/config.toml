@@ -4,42 +4,29 @@ runOnSave = false
 [browser]
 gatherUsageStats = false
 
+# One light, friendly theme for every visitor. There is deliberately no [theme.dark] section: with both a light
+# and a dark theme, Streamlit follows the visitor's device setting, so dark-mode laptops would get a dark site.
 [theme]
+base = "light"
+primaryColor = "#4361ee"              # periwinkle blue; white button text on it = 5.0:1 contrast
+backgroundColor = "#fafbff"           # near-white with a hint of blue
+secondaryBackgroundColor = "#f1f4fc"  # input boxes, code, table headers
+textColor = "#1f2a44"                 # soft navy ink (13.8:1 on the background)
+linkColor = "#3451d1"
+borderColor = "#dfe5f5"
+dataframeBorderColor = "#e6eaf6"
+dataframeHeaderBackgroundColor = "#f3f5fd"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
 baseRadius = "0.6rem"
+paddingTop = "1rem"                   # gap under the top bar (Streamlit adds the bar's height itself)
 showWidgetBorder = true
-showSidebarBorder = false
+showSidebarBorder = true
 
-[theme.light]
-primaryColor = "#0f4c81"
-backgroundColor = "#f6f7f9"
-secondaryBackgroundColor = "#eceff3"
-textColor = "#1b2330"
-linkColor = "#0f4c81"
-borderColor = "#dde2e8"
-dataframeBorderColor = "#e3e7ec"
-
-[theme.light.sidebar]
-backgroundColor = "#0f2a44"
-secondaryBackgroundColor = "#173a5c"
-textColor = "#e8eef5"
-primaryColor = "#2f7fd1"
-borderColor = "#2a4a6b"
-
-[theme.dark]
-primaryColor = "#5b9be0"
-backgroundColor = "#0e131a"
-secondaryBackgroundColor = "#18202b"
-textColor = "#e6e9ee"
-linkColor = "#7fb3e6"
-borderColor = "#2a3442"
-dataframeBorderColor = "#263040"
-
-[theme.dark.sidebar]
-backgroundColor = "#0a1a2b"
-secondaryBackgroundColor = "#12283f"
-textColor = "#e6e9ee"
-primaryColor = "#2f7fd1"
-borderColor = "#1f3a57"
+[theme.sidebar]
+backgroundColor = "#eef2fe"           # soft periwinkle
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1f2a44"
+primaryColor = "#4361ee"
+borderColor = "#dbe2f7"

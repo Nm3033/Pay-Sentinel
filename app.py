@@ -52,9 +52,10 @@ BRAND = "Pay Sentinel"
 TAGLINE = "Scam defense for the PocketPay campus wallet"
 st.set_page_config(page_title=BRAND, page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 
-DARK = st.context.theme.type == "dark"
-SERIES = ["#3987e5", "#d95926", "#199e70"] if DARK else ["#2a78d6", "#eb6834", "#1baf7a"]
-SURFACE = "#0e131a" if DARK else "#f6f7f9"
+# The site is light-only (.streamlit/config.toml has one theme). Don't branch on st.context.theme: on a dark-mode
+# device it reports "dark" on the first run, before the light theme arrives, which would mix dark styling in.
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
+SURFACE = "#fafbff"   # page background (= theme backgroundColor): the gaps between stacked bars
 # Plain-language names for the three decisions (the code's names stay CLEAR / HOLD_FOR_CONFIRMATION / ESCALATE)
 DECISION_INFO = {
     "CLEAR": ("✅", "Sent automatically",
@@ -81,56 +82,67 @@ HUMAN_DONE = ("SENT", "CANCELLED", "EXPIRED", "RELEASED", "CONFIRMED_CANCELLABLE
 TAGS = {"[CODE]": ("tag-code", "CODE"), "[LLM ]": ("tag-llm", "AI"), "[HUMAN]": ("tag-human", "HUMAN")}
 
 # ---- styling ---------------------------------------------------------------------------------------
+# Light, friendly palette: periwinkle brand blue, pastel sky/lavender/mint accents, white cards with soft shadows.
+# Theme colours live in .streamlit/config.toml; these variables only style Pay Sentinel's own HTML blocks.
 st.markdown("""
 <style>
-.block-container {padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1400px;}
-.ps-hero {background: linear-gradient(120deg, #0b2239 0%, #0f4c81 60%, #1b6aa8 100%); color: #f3f7fb;
-  border-radius: 14px; padding: 18px 26px; margin-bottom: 18px; box-shadow: 0 6px 24px rgba(15,42,68,.18);}
-.ps-hero .ps-kicker {font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; opacity: .75; font-weight: 600;}
-.ps-hero h1 {color: #fff; font-size: 1.55rem; font-weight: 700; margin: 2px 0 2px 0; padding: 0; letter-spacing: -.01em;}
-.ps-hero p {margin: 0; opacity: .85; font-size: .92rem;}
+:root {--ps-ink: #1f2a44; --ps-ink-soft: #3d4a66; --ps-brand: #4361ee; --ps-brand-ink: #3451d1;
+  --ps-card: #ffffff; --ps-line: #e3e8f6; --ps-tint: #eef2fe;
+  --ps-shadow: 0 1px 2px rgba(31,42,68,.04), 0 6px 18px rgba(31,42,68,.05);
+  --ps-hero: linear-gradient(120deg, #e4eafe 0%, #ece6fd 52%, #dcf5ee 100%);}
+.block-container {padding-bottom: 3rem; max-width: 1400px;}
+.ps-hero {background: radial-gradient(480px 200px at 96% -10%, rgba(255,255,255,.8), transparent 70%), var(--ps-hero);
+  color: var(--ps-ink); border: 1px solid rgba(67,97,238,.14); border-radius: 16px; padding: 18px 26px;
+  margin-bottom: 18px; box-shadow: 0 8px 28px rgba(67,97,238,.10);}
+.ps-hero .ps-kicker {font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700;
+  color: var(--ps-brand-ink);}
+.ps-hero h1 {color: var(--ps-ink); font-size: 1.55rem; font-weight: 700; margin: 2px 0 2px 0; padding: 0;
+  letter-spacing: -.01em;}
+.ps-hero p {margin: 0; color: var(--ps-ink-soft); font-size: .92rem;}
 .ps-chips {margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;}
-.ps-chip {background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); color: #f3f7fb;
+.ps-chip {background: rgba(255,255,255,.78); border: 1px solid rgba(67,97,238,.18); color: #3446b8;
   border-radius: 999px; padding: 3px 12px; font-size: .76rem; font-weight: 500;}
 .pill {display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 12px;
   font-size: .82rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap;}
-.pill-clear {background: rgba(12,163,12,.12); color: #0a7d0a; border-color: rgba(12,163,12,.35);}
-.pill-review {background: rgba(250,178,25,.16); color: #8a5a00; border-color: rgba(250,178,25,.5);}
-.pill-gate {background: rgba(208,59,59,.12); color: #b42f2f; border-color: rgba(208,59,59,.4);}
+.pill-clear {background: #e3f6ec; color: #0b7a4b; border-color: #b9e6cf;}
+.pill-review {background: #fff3d6; color: #8a5a00; border-color: #f5d98f;}
+.pill-gate {background: #ffe8ec; color: #b4233c; border-color: #f6bfca;}
 .ps-label {font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; opacity: .65; margin-bottom: 2px;}
 .ps-value {font-size: 1rem; font-weight: 600;}
-.trace {border-left: 2px solid rgba(127,127,127,.25); margin-left: 6px; padding-left: 14px;}
+.trace {border-left: 2px solid rgba(67,97,238,.18); margin-left: 6px; padding-left: 14px;}
 .trace-row {position: relative; padding: 5px 0; font-size: .86rem; line-height: 1.35;}
 .trace-row::before {content: ""; position: absolute; left: -20px; top: 11px; width: 10px; height: 10px;
-  border-radius: 50%; background: currentColor; opacity: .35;}
+  border-radius: 50%; background: var(--ps-brand); opacity: .4;}
 .tag {display: inline-block; min-width: 54px; text-align: center; font-size: .68rem; font-weight: 700;
   letter-spacing: .05em; border-radius: 6px; padding: 2px 6px; margin-right: 8px;}
-.tag-code {background: rgba(42,120,214,.14); color: #2a78d6;}
-.tag-llm {background: rgba(98,80,214,.16); color: #6250d6;}
-.tag-human {background: rgba(235,104,52,.16); color: #d95926;}
+.tag-code {background: #e4eafe; color: #3451d1;}
+.tag-llm {background: #eee6ff; color: #6a3fd0;}
+.tag-human {background: #ffe8dc; color: #b2491a;}
 .ps-side-brand {font-weight: 700; font-size: 1.15rem; margin: 0;}
 .ps-side-sub {opacity: .7; font-size: .8rem; margin: 0 0 6px 0;}
-.ps-user {border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.07);
-  border: 1px solid rgba(255,255,255,.12); font-size: .85rem; line-height: 1.4;}
+.ps-user {border-radius: 12px; padding: 10px 12px; background: var(--ps-card); border: 1px solid var(--ps-line);
+  box-shadow: 0 1px 2px rgba(31,42,68,.04); font-size: .85rem; line-height: 1.4;}
 .ps-user b {font-size: .95rem;}
-.ps-help {border-left: 3px solid #2f7fd1; background: rgba(47,127,209,.08); border-radius: 8px;
-  padding: 10px 14px; font-size: .9rem; line-height: 1.45; margin: 0 0 16px 0;}
-.ps-step {border-radius: 12px; padding: 14px 14px 12px 14px; border: 1px solid rgba(127,127,127,.25); height: 100%;}
-.ps-step .n {font-weight: 700; font-size: .75rem; opacity: .55; letter-spacing: .08em;}
+.ps-help {border: 1px solid #dde4fc; border-left: 4px solid var(--ps-brand); background: var(--ps-tint);
+  border-radius: 12px; padding: 10px 14px; font-size: .9rem; line-height: 1.45; margin: 0 0 16px 0;}
+.ps-step {border-radius: 14px; padding: 14px 14px 12px 14px; border: 1px solid var(--ps-line);
+  background: var(--ps-card); box-shadow: var(--ps-shadow); height: 100%;}
+.ps-step .n {font-weight: 700; font-size: .75rem; color: var(--ps-brand-ink); letter-spacing: .08em;}
 .ps-step .t {font-weight: 700; font-size: 1rem; margin: 4px 0 6px 0;}
 .ps-step .d {font-size: .84rem; opacity: .85; line-height: 1.4;}
 .ps-phone {max-width: 380px; margin: 0 auto; border-radius: 28px; padding: 18px 18px 10px 18px;
-  border: 8px solid #1b2330; background: linear-gradient(180deg, rgba(47,127,209,.10), rgba(47,127,209,.02));}
+  border: 8px solid #e3e8f7; background: linear-gradient(180deg, #f1f4ff, var(--ps-card) 55%);
+  box-shadow: 0 14px 36px rgba(31,42,68,.12);}
 .ps-phone .app {font-weight: 700; font-size: .95rem; margin-bottom: 6px;}
 .ps-phone .amt {font-size: 1.6rem; font-weight: 700; margin: 4px 0;}
 .ps-phone .msg {font-size: .9rem; line-height: 1.45; margin: 8px 0 4px 0;}
-.ps-warn {border-radius: 10px; padding: 8px 10px; background: rgba(208,59,59,.12); font-size: .82rem; margin: 6px 0;}
+.ps-warn {border-radius: 10px; padding: 8px 10px; background: #ffe8ec; color: #8f1d33; font-size: .82rem; margin: 6px 0;}
+[data-testid="stMetric"] {background: var(--ps-card); box-shadow: var(--ps-shadow);}
+.st-key-decision_CLEAR {background: linear-gradient(180deg, #e9f8f0, transparent 75%);}
+.st-key-decision_HOLD_FOR_CONFIRMATION {background: linear-gradient(180deg, #ebf0ff, transparent 75%);}
+.st-key-decision_ESCALATE {background: linear-gradient(180deg, #ffedf0, transparent 75%);}
 </style>
 """, unsafe_allow_html=True)
-if DARK:  # follow Streamlit's chosen theme, not the OS setting
-    st.markdown("<style>.pill-clear{color:#5fd35f}.pill-review{color:#fcc75a}.pill-gate{color:#f08a8a}"
-                ".tag-llm{color:#9085e9}.tag-code{color:#5b9be0}.tag-human{color:#ec835a}"
-                ".ps-phone{border-color:#2a3442}</style>", unsafe_allow_html=True)
 
 ss = st.session_state
 ss.setdefault("ver", 0)
@@ -231,10 +243,15 @@ def login_page() -> None:
     st.markdown("""<style>
       [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"],
       header[data-testid="stHeader"] {display: none !important;}
-      .stApp {background: radial-gradient(1200px 600px at 15% -10%, rgba(27,106,168,.35), transparent 60%),
-                          radial-gradient(900px 500px at 110% 110%, rgba(15,76,129,.30), transparent 60%);}
+      .stApp {background: radial-gradient(1100px 560px at 12% -8%, rgba(99,124,255,.20), transparent 62%),
+                          radial-gradient(900px 520px at 100% 0%, rgba(178,150,255,.16), transparent 60%),
+                          radial-gradient(1000px 560px at 85% 112%, rgba(72,212,170,.16), transparent 60%),
+                          #fafbff;}
       .block-container {padding-top: 7vh; max-width: 1100px;}
-      [data-testid="stForm"] {box-shadow: 0 10px 40px rgba(11,34,57,.18); padding: 26px 28px 18px 28px;}
+      [data-testid="stForm"] {background: #ffffff; border-color: #e3e8f8; border-radius: 18px;
+                              box-shadow: 0 18px 50px rgba(67,97,238,.12); padding: 26px 28px 18px 28px;}
+      [class*="st-key-feature_"] {background: rgba(255,255,255,.72); border-color: #e3e8f8;
+                                  box-shadow: 0 4px 16px rgba(31,42,68,.05);}
       .ps-login-logo {font-size: 2.6rem; line-height: 1; margin-bottom: 6px;}
       .ps-login-title {font-size: 2.3rem !important; font-weight: 700; letter-spacing: -.02em; line-height: 1.15;
                        margin: 4px 0 0 0;}
@@ -267,11 +284,11 @@ def login_page() -> None:
                    f"{config.OFFICER_SESSION_MINUTES} minutes.")
     st.write("")
     f = st.columns(3)
-    for col, (icon, head, body) in zip(f, [
+    for i, (col, (icon, head, body)) in enumerate(zip(f, [
             ("🥪", "Snacks never wait", "Verified canteen and shop payments clear instantly, with no human needed."),
             ("🎫", "Scams get paused", "Shady ticket deals and phishing links pause for the student or staff."),
-            ("🔓", "No wallet is ever frozen", "Code only allows clear, hold or escalate; a human always decides.")]):
-        with col.container(border=True):
+            ("🔓", "No wallet is ever frozen", "Code only allows clear, hold or escalate; a human always decides.")])):
+        with col.container(border=True, key=f"feature_{i}"):   # frosted white card (login CSS above)
             st.markdown(f"**{icon} {head}**")
             st.markdown(f'<div class="ps-feature">{body}</div>', unsafe_allow_html=True)
 
@@ -446,7 +463,7 @@ def page_home() -> None:
     examples = {"CLEAR": "AED 15 at the Campus Canteen", "HOLD_FOR_CONFIRMATION": "AED 60 for a textbook from a "
                 "brand-new classmate account", "ESCALATE": "“Bro urgent! Selling my Front Row Fest pass…”"}
     for col, (code, (emoji, title, meaning)) in zip(st.columns(3), DECISION_INFO.items()):
-        with col.container(border=True):
+        with col.container(border=True, key=f"decision_{code}"):   # pastel wash per decision (CSS above)
             st.markdown(f"### {emoji} {title}")
             st.markdown(meaning)
             st.caption(f"Example: {examples[code]}")
@@ -1036,7 +1053,7 @@ def page_campaigns() -> None:
                    + (f"Account {(c.last_ts.date() - r.created_on).days} days old, trust {r.trust_score}/100, "
                       f"{r.scam_reports} report(s)." if r else "Not a known account.")
                    + (f" Links: {', '.join(c.links)}" if c.links else ""))
-        st.graphviz_chart(campaign_dot([c], "dark" if DARK else "light"), width="stretch")
+        st.graphviz_chart(campaign_dot([c], "light"), width="stretch")
     with right, st.container(border=True):
         st.markdown("##### Each payment's outcome")
         pay = pd.DataFrame([dict(Payment=t, Student=s, Amount=a, Outcome=OUTCOME_LABEL[o])
@@ -1105,7 +1122,7 @@ def page_roi() -> None:
                          order=alt.Order("order:Q"),
                          tooltip=[alt.Tooltip("true_class:N", title="True label"),
                                   alt.Tooltip("route:N", title="Decision"), alt.Tooltip("count:Q", title="Payments")])
-                 .properties(height=200)
+                 .properties(height=300)   # whole chart incl. legend + axis; 200 squeezed the 4 bars together
                  .configure_axis(grid=False, domain=False)
                  .configure_view(stroke=None))
         st.altair_chart(chart, width="stretch")
