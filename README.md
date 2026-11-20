@@ -41,11 +41,11 @@ No AI key? Turn **Use AI agents** off in the sidebar (⚙️ More tools): the fi
 Command line:
 ```bash
 python -m src.workflow --demo            # the 12 test scenarios, with a scorecard
-python -m pytest -q                      # 168 automated tests (tests/test_curveballs.py = the Round 2 live tests)
+python -m pytest -q                      # 171 automated tests (tests/test_curveballs.py = the Round 2 live tests)
 ```
 
-## Results (rules only, all 250 synthetic payments)
-0 of 50 scams cleared automatically · 15 of 15 unclear-slang cases escalated · 82% of safe payments cleared instantly ·
+## Results (rules only, all 200 synthetic payments)
+0 of 40 scams cleared automatically · 12 of 12 unclear-slang cases escalated · 82% of safe payments cleared instantly ·
 12 of 12 test scenarios match their expected outcome (also with the live AI).
 
 ## Repository
@@ -61,7 +61,7 @@ src/lookalike.py    lookalike-shop detection (pure Python)
 src/workflow.py     orchestration, AI reader & writer, parallel checking
 src/graph.py        scam-campaign detection
 src/auth.py         staff accounts (hashed passwords, signed sessions)
-tests/              168 pytest tests
+tests/              171 pytest tests
 DEMO.md             5-minute demo script
 ```
 

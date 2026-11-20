@@ -328,6 +328,7 @@ class CaseFile(Strict):
     errors: list[str] = []
     trace: list[str] = []          # plain-language decision log for the UI / audit trail
     llm_usage: list[dict] = []     # per-call tokens & latency (telemetry)
+    checked_at: datetime | None = None   # when Pay Sentinel last checked this payment
 
 
 class NewTransaction(Strict):

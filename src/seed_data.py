@@ -4,7 +4,7 @@
     python -m src.seed_data --db x.sqlite --seed 7
 
 Contents: 250 students, verified campus vendors, peer accounts (established, brand-new, scam),
-250 flagged payments with the chat messages that led to them, plus 12 named demo scenarios.
+200 flagged payments with the chat messages that led to them, plus 12 named demo scenarios.
 Mix (see COUNTS): ~74% safe (canteen, friends, legit new sellers), ~20% scams (ticket campaign,
 PocketPay impersonation, giveaways, exam leaks, hidden-instruction attacks), ~6% uncertain slang.
 All people, handles and links are fictional.
@@ -28,13 +28,14 @@ WINDOW_START = datetime(2026, 11, 9, 7, 0)   # a school week
 WINDOW_DAYS = 7
 N_STUDENTS = 250
 
-# Background flagged payments per scenario (238) + 12 named demo scenarios = 250 in total.
+# Background flagged payments per scenario (188) + 12 named demo scenarios = 200 in total
+# (148 safe / 40 scams / 12 uncertain = 74% / 20% / 6%).
 # Mix incl. demo: 185 safe (74%) · 50 scams (20%, incl. hidden-instruction attacks) · 15 uncertain slang (6%).
 COUNTS = {
-    "vendor_purchase": 113, "friend_p2p": 38, "new_seller_legit": 20, "big_p2p_legit": 9,          # safe (180)
-    "scam_tickets": 7, "scam_fest": 5, "scam_support": 6, "scam_unlock": 3, "scam_airpods": 7,      # scams (46)
-    "scam_exam": 9, "memo_injection": 9,
-    "uncertain_slang": 12,                                                                          # uncertain (12)
+    "vendor_purchase": 90, "friend_p2p": 30, "new_seller_legit": 16, "big_p2p_legit": 7,           # safe (143)
+    "scam_tickets": 6, "scam_fest": 4, "scam_support": 5, "scam_unlock": 2, "scam_airpods": 5,      # scams (36)
+    "scam_exam": 7, "memo_injection": 7,
+    "uncertain_slang": 9,                                                                           # uncertain (9)
 }
 
 SCHEMA = """
@@ -61,6 +62,7 @@ CREATE TABLE payment_states (txn_id TEXT PRIMARY KEY, state TEXT, awaiting TEXT,
   created_at TEXT, updated_at TEXT, expires_at TEXT, last_action TEXT, last_actor TEXT, history TEXT);
 CREATE TABLE case_resolutions (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT, txn_id TEXT,
   action TEXT, from_state TEXT, to_state TEXT, actor TEXT, note TEXT, reasons TEXT, committed_at TEXT);
+CREATE TABLE starred (alert_id TEXT PRIMARY KEY, starred_by TEXT, starred_at TEXT);
 CREATE TABLE demo_scenarios (ordinal INTEGER PRIMARY KEY, txn_id TEXT, title TEXT,
   expected_route TEXT);            -- expected_route is EVALUATION-ONLY
 CREATE TABLE scam_broadcasts (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient_handle TEXT, text TEXT,
@@ -411,6 +413,8 @@ class _Builder:
             conn.executemany("INSERT INTO alerts VALUES (?,?,?,?,?)", alert_rows)
             conn.executemany("INSERT INTO demo_scenarios VALUES (?,?,?,?)",
                              [(n, t["txn_id"], title, expected) for n, title, expected, t in self.demo])
+            conn.execute("INSERT INTO starred SELECT a.alert_id, 'system', a.created_at FROM alerts a "
+                         "JOIN demo_scenarios d ON d.txn_id = a.txn_id")       # the 12 scenarios start starred
             conn.commit()
         finally:
             conn.close()

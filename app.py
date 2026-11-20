@@ -321,6 +321,7 @@ cases = load_cases(data_version())
 DEMO_ROWS = services.list_demo_scenarios()
 _txn_alert = dict(zip(queue["txn"], queue["alert"]))
 DEMO = [_txn_alert[d["txn_id"]] for d in DEMO_ROWS if d["txn_id"] in _txn_alert]
+STARRED = services.list_starred()      # staff bookmarks (the 12 scenarios start starred)
 DEMO_TITLE = {_txn_alert[d["txn_id"]]: f"#{d['ordinal']} {d['title']}" for d in DEMO_ROWS if d["txn_id"] in _txn_alert}
 _alert_status = dict(zip(queue["alert"], queue["alert_status"]))
 STAFF_Q = sorted((c for c in cases.values() if c.state == PaymentState.ESCALATED
@@ -332,6 +333,16 @@ CANCELLABLE = [c for c in cases.values() if c.state == PaymentState.CONFIRMED_CA
 pending = len(STAFF_Q)
 tel = compute_telemetry(list(cases.values()))
 officer_title = next((o["title"] for o in auth.list_officers() if o["officer_id"] == officer), "")
+
+
+def checked_time(c: CaseFile) -> float:
+    """When the payment was last checked (older case files without a time: when the file was saved)."""
+    if c.checked_at is not None:
+        return c.checked_at.timestamp()
+    try:
+        return (workflow.CASES_DIR / f"{c.case_id}.json").stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def state_text(alert_id: str) -> str:
@@ -445,8 +456,8 @@ def page_home() -> None:
     st.markdown("""
 | Step | Page | What it's for |
 |---|---|---|
-| 1 · Check payments | 📥 **Flagged payments** | The list of every flagged payment and its status. Tick rows to check several at once. |
-| | 🔍 **Payment details** | One payment, step by step: what it read, what it checked, what it decided and why. |
+| 1 · Check payments | 📥 **Flagged payments** | The list of every flagged payment and its status. Tick rows to check several at once, or ⭐ star them to keep them at the top. |
+| | 🔍 **Payment details** | One payment, step by step: what it read, what it checked, what it decided and why. Recently checked payments are listed first. |
 | | ➕ **Add payments** | Type your own payment and message (or upload many) and see how it's handled. |
 | 2 · People decide | 📱 **Student app** | What the student sees on their phone: *I know this seller* or *Cancel transfer*. |
 | | 👪 **Guardian app** | A parent/guardian approves big transfers to classmates by students under 16. |
@@ -513,7 +524,8 @@ def page_queue() -> None:
     hero("Flagged payments", "Every payment the old keyword rules flagged, and where each one ended up.")
     how_to("<b>1.</b> Tick one or more rows and press <b>Check selected</b> (or <b>Check all shown</b>); several are "
            "checked at the same time. <b>2.</b> Tick a single row and press <b>Open details</b> to see why it was decided. "
-           "Use <b>Show</b> to filter. ⭐ marks the 12 test scenarios.")
+           "Use <b>Show</b> to filter. ⭐ = starred: starred payments stay at the top. Tick rows and press "
+           "<b>⭐ Star</b> / <b>☆ Unstar</b> to change them (the 12 test scenarios start starred).")
     states = [c.state.value if c.state else "" for c in cases.values()]
     m = st.columns(4)
     m[0].metric("Not checked yet", f"{len(queue) - len(cases):,}", border=True)
@@ -523,14 +535,14 @@ def page_queue() -> None:
     st.caption(STATUS_KEY)
 
     df = pd.DataFrame({
-        "★": queue["alert"].map(lambda a: "⭐" if a in DEMO else ""),
+        "★": queue["alert"].map(lambda a: "⭐" if a in STARRED else ""),
         "Alert": queue["alert"], "Time": queue["time"], "Amount (AED)": queue["amount_aed"],
         "To": queue["recipient"], "Status": queue["alert"].map(state_text)})
     c1, c2 = st.columns([3, 2], vertical_alignment="bottom")
     views = {"All": None, "⚪ Not checked": STATE_TEXT[""], "✅ Sent": STATE_TEXT["CLEARED"],
              "⏸️ Student": STATE_TEXT["PENDING_CONFIRMATION"], "👪 Guardian": STATE_TEXT["PENDING_GUARDIAN"],
              "🚩 Staff": STATE_TEXT["ESCALATED"],
-             "Decided by a person": "human", "⭐ Scenarios": "demo"}
+             "Decided by a person": "human", "⭐ Starred": "demo"}
     view = c1.segmented_control("Show", list(views), default="All") or "All"
     q = c2.text_input("Search", placeholder="🔎 Search alert ID or @handle", label_visibility="collapsed")
     if views[view] == "demo":
@@ -541,6 +553,8 @@ def page_queue() -> None:
         df = df[df["Status"] == views[view]]
     if q:
         df = df[df["Alert"].str.contains(q, case=False, regex=False) | df["To"].str.contains(q, case=False, regex=False)]
+    df = df.assign(_s=df["★"].eq("⭐")).sort_values(["_s", "Alert"], ascending=[False, True]).drop(columns="_s")
+    df = df.reset_index(drop=True)
     event = st.dataframe(df, hide_index=True, width="stretch", height=430, on_select="rerun",
                          selection_mode="multi-row", key="queue_table", column_config={
         "★": st.column_config.TextColumn("", width=32),
@@ -562,6 +576,16 @@ def page_queue() -> None:
     if c4.button(f"▶ Check all shown ({cap})", width="stretch", disabled=not unchecked_shown,
                  help="Every not-yet-checked payment that matches the current filter (up to 100)"):
         triage_alerts(unchecked_shown[:100])
+    to_star = [a for a in chosen if a not in STARRED]
+    to_unstar = [a for a in chosen if a in STARRED]
+    _, s1, s2 = st.columns([4.8, 1.2, 1.3])
+    if s1.button(f"⭐ Star ({len(to_star)})", width="stretch", disabled=not to_star,
+                 help="Starred payments stay at the top of this list"):
+        services.set_starred(to_star, True, officer)
+        refresh(); st.toast(f"Starred {len(to_star)} payment(s).", icon="⭐"); st.rerun()
+    if s2.button(f"☆ Unstar ({len(to_unstar)})", width="stretch", disabled=not to_unstar):
+        services.set_starred(to_unstar, False, officer)
+        refresh(); st.toast(f"Unstarred {len(to_unstar)} payment(s).", icon="☆"); st.rerun()
 
 
 def render_case(c: CaseFile) -> None:
@@ -674,17 +698,21 @@ def page_investigation() -> None:
     how_to("Pick a payment and press <b>Check payment</b> to watch it live. The card at the top gives the "
            "<b>decision and why</b>. The tabs below show <b>each step</b>, <b>the message</b>, <b>the evidence</b> and a "
            "<b>shareable report</b>.")
-    order = DEMO + [a for a in queue["alert"] if a not in DEMO]
+    # most recently checked first, then starred payments not checked yet, then everything else
+    checked = sorted(cases, key=lambda a: checked_time(cases[a]), reverse=True)
+    rest = [a for a in queue["alert"] if a not in cases]
+    order = checked + [a for a in rest if a in STARRED] + [a for a in rest if a not in STARRED]
     info = queue.set_index("alert")
 
     def label(a: str) -> str:
         r = info.loc[a]
-        return (f"{DEMO_TITLE[a] + ' · ' if a in DEMO else ''}{a} · {r.amount_aed:,.2f} AED to {r.recipient} · "
-                f"{state_text(a)}")
+        return (f"{'⭐ ' if a in STARRED else ''}{DEMO_TITLE[a] + ' · ' if a in DEMO else ''}{a} · "
+                f"{r.amount_aed:,.2f} AED to {r.recipient} · {state_text(a)}")
 
     start = order.index(ss.selected_alert) if ss.selected_alert in order else 0
     c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
-    sel = c1.selectbox("Payment", order, index=start, format_func=label)
+    sel = c1.selectbox("Payment", order, index=start, format_func=label,
+                       help="Most recently checked first, then ⭐ starred, then the rest")
     ss.selected_alert = sel
     existing = cases.get(sel)
     done = existing is not None and existing.state is not None and existing.state.value in ("CLEARED",) + HUMAN_DONE

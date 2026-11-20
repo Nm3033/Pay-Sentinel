@@ -21,9 +21,9 @@ def fresh(tmp_path):
 # ---- Dataset ---------------------------------------------------------------------------------
 def test_mix_and_scenarios(conn, demo):
     mix = dict(conn.execute("SELECT ground_truth, COUNT(*) FROM transactions GROUP BY ground_truth").fetchall())
-    assert mix == {"SAFE": 185, "SCAM": 50, "UNCERTAIN": 15}
-    assert sum(mix.values()) == sum(seed_data.COUNTS.values()) + 12 == 250
-    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 250
+    assert mix == {"SAFE": 148, "SCAM": 40, "UNCERTAIN": 12}
+    assert sum(mix.values()) == sum(seed_data.COUNTS.values()) + 12 == 200
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 200
     assert len(demo) == 12 and sum(e == "ESCALATE" for _, e in demo.values()) >= 3
     titles = [d["title"] for d in services.list_demo_scenarios(conn=conn)]
     assert sum(t.startswith("Unclear slang") for t in titles) == 3          # brief: 3 uncertain cases
@@ -189,3 +189,22 @@ def test_scam_broadcast_needs_staff(fresh, officer_token):
     services.broadcast_scam_alert("@campus_tix_99", "Don't pay @campus_tix_99",
                                   StaffApproval(staff_id="SUP-01", session_token=officer_token), conn=fresh)
     assert services.list_broadcasts(conn=fresh)[0]["staff_id"] == "SUP-01"
+
+
+# ---- stars (staff bookmarks) -----------------------------------------------------------------------
+def test_stars_start_on_the_scenarios_and_can_be_toggled(conn, demo):
+    starred = services.list_starred(conn=conn)
+    scenario_alerts = {services.get_alert_for_txn(t, conn=conn).record_id for t, _ in demo.values()}
+    assert starred == scenario_alerts and len(starred) == 12
+    other = next(a.record_id for a in services.list_alerts(conn=conn) if a.record_id not in starred)
+    assert services.set_starred([other, "ALR-99999"], True, "SUP-01", conn=conn) == 1   # unknown IDs ignored
+    assert other in services.list_starred(conn=conn)
+    assert services.set_starred([other], True, "SUP-01", conn=conn) == 0                 # already starred
+    assert services.set_starred([other, *scenario_alerts], False, "SUP-01", conn=conn) == 13
+    assert services.list_starred(conn=conn) == set()
+
+
+def test_stars_table_created_for_older_databases(conn):
+    conn.execute("DROP TABLE starred")
+    conn.commit()
+    assert len(services.list_starred(conn=conn)) == 12     # recreated, scenarios starred again

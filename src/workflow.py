@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 from contextvars import ContextVar
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -302,6 +303,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
     usage_token = USAGE_SINK.set(usage)
     try:
         case = load_case(alert_id, conn)
+        case.checked_at = datetime.now()
         t = case.transaction
         kind = "purchase" if t.txn_type == "PURCHASE" else "transfer to another student"
         _step(case, f"[CODE] Opened flagged payment {alert_id}: a {t.amount_aed:,.2f} AED {kind} to {t.recipient_handle} "

@@ -56,7 +56,7 @@ def test_telemetry_code_only(conn):
     cases = [workflow.run_case(a.record_id, use_llm=False, conn=conn, commit=False, save=False)
              for a in services.list_alerts(conn=conn)]
     t = compute_telemetry(cases, conn=conn)
-    assert t.triaged == 250 and sum(r["count"] for r in t.outcome) == 250
-    assert t.scams_cleared == 0 and t.injections_cleared == 0 and t.uncertain_escalated == t.uncertain_total == 15
+    assert t.triaged == 200 and sum(r["count"] for r in t.outcome) == 200
+    assert t.scams_cleared == 0 and t.injections_cleared == 0 and t.uncertain_escalated == t.uncertain_total == 12
     assert t.auto_clear_rate >= 0.8 and t.queue_precision > t.legacy_precision
     assert t.hours_saved > 0 and t.llm_calls == 0

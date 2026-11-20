@@ -553,6 +553,39 @@ INTAKE_MAX_ROWS = 500
 _INTAKE_FIELDS = set(NewTransaction.model_fields)
 
 
+# ---- stars (a staff bookmark on a flagged payment; never affects any decision) ---------------------------------
+def _stars_table(c: sqlite3.Connection) -> None:
+    """Older databases have no `starred` table: create it and star the demo scenarios, like a fresh dataset."""
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'starred'").fetchone():
+        return
+    c.execute("CREATE TABLE starred (alert_id TEXT PRIMARY KEY, starred_by TEXT, starred_at TEXT)")
+    c.execute("INSERT INTO starred SELECT a.alert_id, 'system', a.created_at FROM alerts a "
+              "JOIN demo_scenarios d ON d.txn_id = a.txn_id")
+    c.commit()
+
+
+def list_starred(*, conn: sqlite3.Connection | None = None) -> set[str]:
+    with _use(conn) as c:
+        _stars_table(c)
+        return {r[0] for r in c.execute("SELECT alert_id FROM starred")}
+
+
+def set_starred(alert_ids: list[str], starred: bool, staff_id: str, *,
+                conn: sqlite3.Connection | None = None) -> int:
+    """Star or unstar flagged payments. Returns how many changed. Unknown alert IDs are ignored."""
+    with _use(conn) as c:
+        _stars_table(c)
+        known = [a for a in alert_ids if c.execute("SELECT 1 FROM alerts WHERE alert_id = ?", (a,)).fetchone()]
+        before = c.total_changes
+        if starred:
+            now = datetime.now().isoformat(timespec="seconds")
+            c.executemany("INSERT OR IGNORE INTO starred VALUES (?,?,?)", [(a, staff_id, now) for a in known])
+        else:
+            c.executemany("DELETE FROM starred WHERE alert_id = ?", [(a,) for a in known])
+        c.commit()
+        return c.total_changes - before
+
+
 def list_students(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     """Students with their age today (for the data-entry form and the student / guardian screens)."""
     today = date.today()

@@ -151,3 +151,19 @@ def test_run_12_scenarios_in_parallel_from_the_app(conn, officer_passwords):
     assert not at.exception, at.exception
     assert any("Checked **12** payment(s), 4 at a time" in s.value for s in at.success), [s.value for s in at.success]
     assert len(services.list_payment_states(conn=conn)) == 12
+
+
+def test_queue_starred_first_and_details_recent_first(conn, officer_passwords):
+    d = _demo(conn)
+    alerts = [a.record_id for a in services.list_alerts(conn=conn)]
+    starred = services.list_starred(conn=conn)
+    plain = [a for a in alerts if a not in starred]
+    services.set_starred([plain[-1]], True, "SUP-01", conn=conn)            # star the very last payment
+    first, second = run(conn, d[1]), run(conn, d[2])                         # second is checked most recently
+    at = _signed_in(officer_passwords)
+    at.button(key="try2").click().run()                                      # Payment details
+    assert not at.exception, at.exception
+    opts = at.selectbox[0].options
+    assert second.alert.record_id in opts[0] and first.alert.record_id in opts[1]
+    assert plain[-1] in opts[2] or any(plain[-1] in o for o in opts[2:15])  # starred, unchecked: before the rest
+    assert opts.index(next(o for o in opts if plain[-1] in o)) < opts.index(next(o for o in opts if plain[0] in o))

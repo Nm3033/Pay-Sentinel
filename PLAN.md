@@ -42,7 +42,7 @@ flagged payment ──► [CODE] sanitizer regex  ─┐ chat message + payment 
 |---|---|
 | `src/config.py` | Payment rules as constants: `VENDOR_NORMAL_MAX_AED=150`, `P2P_AUTO_MAX_AED=100`, `NEW_ACCOUNT_DAYS=30`, `TRUST_MIN=60`, `REPORTS_ESCALATE=2`, `CAMPAIGN_MIN_STUDENTS=3`, `CONFIDENCE_MIN=0.7`, `UNCLEAR_TERMS_MIN=2`, `HOLD_EXPIRY_HOURS=24`, `MAX_STUDENT_PROMPTS=2` |
 | `src/schemas.py` | `Transaction`, `StudentProfile`, `ChatMessage`, `Recipient`, `RecipientCheck`, `TransactionContext`, `MessageSignals`, `MessageAssessment`, `GateDecision`, `Route`, `PaymentState`, `Action` (no freeze), `PaymentStateRecord`, `CaseFile`, `NewTransaction` |
-| `src/seed_data.py` | 250 students, verified vendors, peers (established / new / scam), 250 flagged payments (238 background + 12 demo; counts in `COUNTS`), 121 chat messages, **12 named demo scenarios** (3 uncertain, 1 outage); hidden labels for eval |
+| `src/seed_data.py` | 250 students, verified vendors, peers (established / new / scam), 200 flagged payments (188 background + 12 demo; counts in `COUNTS`), 121 chat messages, **12 named demo scenarios** (3 uncertain, 1 outage); hidden labels for eval |
 | `src/services.py` | `get_transaction_context()`, `verify_campus_recipient()`, `update_payment_state()` (transition table, identity checks, reminder cap, independent CLEAR guard), `expire_stale_holds()`, campaign spread, broadcasts, intake |
 | `src/slang.py` | Deterministic scam-pattern + unreadable-slang scanner |
 | `src/sanitizer.py` | Prompt-injection guard (regex + AI checker), unchanged |
@@ -68,7 +68,7 @@ flagged payment ──► [CODE] sanitizer regex  ─┐ chat message + payment 
   / `RELEASED` (after it), refused attempts logged as `REJECTED:` · ✅ HS-1.5 `PENDING_GUARDIAN` + `guardian:` actor,
   age from `students.date_of_birth`. Tests: `tests/test_curveballs.py`.
 
-Results: code-only on all 250 payments, 0/50 scams auto-cleared, 15/15 uncertain escalated, 152/185 (82%) safe payments
+Results: code-only on all 200 payments, 0/40 scams auto-cleared, 12/12 uncertain escalated, 121/148 (82%) safe payments
 cleared instantly. Live AI (Groq gpt-oss-120b): 12/12 demo scenarios match.
 
 ## 4. Checkpoint (team)

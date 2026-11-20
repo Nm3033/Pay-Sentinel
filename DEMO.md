@@ -43,5 +43,5 @@ The 🏠 Start page has an "Extra safety rules (Round 2)" table that points to e
 If a judge changes a number, edit `src/config.py` and restart; if they change a name or wording, nothing needs to change.
 Automated proof: `python -m pytest -q tests/test_curveballs.py` runs each live test end to end.
 
-Expected (code-only, all 250 payments): 0/50 scams auto-cleared · 15/15 uncertain escalated · 82% of safe payments
+Expected (code-only, all 200 payments): 0/40 scams auto-cleared · 12/12 uncertain escalated · 82% of safe payments
 cleared instantly · 12/12 demo scenarios match (also with the live AI).
