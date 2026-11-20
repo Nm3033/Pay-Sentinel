@@ -30,6 +30,15 @@ try:
 except Exception:  # noqa: BLE001 - no secrets file locally: .env is used instead
     pass
 
+# After a `git push`, Streamlit Cloud re-runs this file but can keep the OLD src/ modules in memory, so new
+# functions look missing (AttributeError). If any src/*.py file changed since src was loaded, load it fresh.
+import sys  # noqa: E402
+
+_SRC_STAMP = max(p.stat().st_mtime_ns for p in (Path(__file__).resolve().parent / "src").glob("*.py"))
+if sys.modules.get("src") is not None and getattr(sys.modules["src"], "_loaded_stamp", None) != _SRC_STAMP:
+    for _name in [m for m in sys.modules if m == "src" or m.startswith("src.")]:
+        del sys.modules[_name]
+
 from src import auth, config, seed_data, services, workflow  # noqa: E402
 from src.gate import REASON_TEXT, plain_reasons
 from src.graph import (OUTCOME_LABEL, campaign_dot, campaign_verdict, case_outcome, detect_scam_campaigns)
