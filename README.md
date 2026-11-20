@@ -7,7 +7,7 @@ instantly**, **risky peer transfers pause for the student to confirm**, and **li
 full decision log**. **No wallet is ever frozen.**
 
 - **Live app:** `https://pay-sentinel-techx.streamlit.app`
-- **Demo login:** support-staff ID `SUP-01` (the password is in our Round 1 submission)
+- **Demo login:** support-staff ID `SUP-01` Password:`StaffExample-01`
 
 ## What it does
 | | |
