@@ -4,29 +4,30 @@ runOnSave = false
 [browser]
 gatherUsageStats = false
 
-# One light, friendly theme for every visitor. There is deliberately no [theme.dark] section: with both a light
-# and a dark theme, Streamlit follows the visitor's device setting, so dark-mode laptops would get a dark site.
+# One light theme for every visitor: white pages with light-blue accents (decorations and buttons are in app.py CSS).
+# There is deliberately no [theme.dark] section: with both a light and a dark theme, Streamlit follows the
+# visitor's device setting, so dark-mode laptops would get a dark site.
 [theme]
 base = "light"
-primaryColor = "#4361ee"              # periwinkle blue; white button text on it = 5.0:1 contrast
-backgroundColor = "#fafbff"           # near-white with a hint of blue
-secondaryBackgroundColor = "#f1f4fc"  # input boxes, code, table headers
-textColor = "#1f2a44"                 # soft navy ink (13.8:1 on the background)
-linkColor = "#3451d1"
-borderColor = "#dfe5f5"
-dataframeBorderColor = "#e6eaf6"
-dataframeHeaderBackgroundColor = "#f3f5fd"
+primaryColor = "#1976d2"              # blue for focus rings, checkboxes, selected tabs (4.6:1 on white)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef7ff"  # light-blue input boxes, code, table headers
+textColor = "#10284a"                 # deep navy ink (14.7:1 on white)
+linkColor = "#1565c0"
+borderColor = "#cfe6fb"
+dataframeBorderColor = "#e1effc"
+dataframeHeaderBackgroundColor = "#eaf5ff"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
-baseRadius = "0.6rem"
+baseRadius = "0.75rem"
 paddingTop = "1rem"                   # gap under the top bar (Streamlit adds the bar's height itself)
 showWidgetBorder = true
 showSidebarBorder = true
 
 [theme.sidebar]
-backgroundColor = "#eef2fe"           # soft periwinkle
+backgroundColor = "#e8f4ff"           # light blue
 secondaryBackgroundColor = "#ffffff"
-textColor = "#1f2a44"
-primaryColor = "#4361ee"
-borderColor = "#dbe2f7"
+textColor = "#10284a"
+primaryColor = "#1976d2"
+borderColor = "#cfe6fb"
