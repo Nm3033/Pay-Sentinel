@@ -30,6 +30,7 @@ except Exception:  # noqa: BLE001 - no secrets file locally: .env is used instea
     pass
 
 from src import auth, config, seed_data, services, workflow  # noqa: E402
+from src.gate import REASON_TEXT, plain_reasons
 from src.graph import (OUTCOME_LABEL, campaign_dot, campaign_verdict, case_outcome, detect_scam_campaigns)
 from src.report import visible_text
 from src.schemas import CaseFile, PaymentState, Route, StaffApproval
@@ -44,12 +45,25 @@ st.set_page_config(page_title=BRAND, page_icon="🛡️", layout="wide", initial
 DARK = st.context.theme.type == "dark"
 SERIES = ["#3987e5", "#d95926", "#199e70"] if DARK else ["#2a78d6", "#eb6834", "#1baf7a"]
 SURFACE = "#0e131a" if DARK else "#f6f7f9"
-ROUTE_PILL = {"CLEAR": ("pill-clear", "✓", "Clear"),
-              "HOLD_FOR_CONFIRMATION": ("pill-review", "⏸", "Hold for confirmation"),
-              "ESCALATE": ("pill-gate", "⛨", "Escalate to staff")}
-STATE_TEXT = {"CLEARED": "🟢 Cleared", "PENDING_CONFIRMATION": "🟡 Waiting for student", "ESCALATED": "🔴 With staff",
-              "SENT": "✅ Sent (confirmed)", "CANCELLED": "↩️ Cancelled", "EXPIRED": "⌛ Expired, refunded",
-              "": "⚪ Not triaged"}
+# Plain-language names for the three decisions (the code's names stay CLEAR / HOLD_FOR_CONFIRMATION / ESCALATE)
+DECISION_INFO = {
+    "CLEAR": ("✅", "Sent automatically",
+              "Safe everyday payment. It went through straight away, and nobody needed to check it."),
+    "HOLD_FOR_CONFIRMATION": ("⏸️", "Ask the student",
+                              "Paused for a moment. The student confirms they know the seller, or cancels. "
+                              "Their wallet keeps working."),
+    "ESCALATE": ("🚩", "Send to staff",
+                 "Paused and passed to the campus support team, who release or cancel it. "
+                 "The student's wallet keeps working."),
+}
+ROUTE_PILL = {"CLEAR": ("pill-clear", "✓", "Sent automatically"),
+              "HOLD_FOR_CONFIRMATION": ("pill-review", "⏸", "Ask the student"),
+              "ESCALATE": ("pill-gate", "⚑", "Send to staff")}
+STATE_TEXT = {"CLEARED": "✅ Sent automatically", "PENDING_CONFIRMATION": "⏸️ Waiting for the student",
+              "ESCALATED": "🚩 Waiting for staff", "SENT": "✅ Sent after a check", "CANCELLED": "↩️ Cancelled (money kept)",
+              "EXPIRED": "⌛ Expired (money returned)", "": "⚪ Not checked yet"}
+STATUS_KEY = ("**Status key:** ✅ sent · ⏸️ waiting for the student · 🚩 waiting for staff · "
+              "↩️ / ⌛ stopped, the money stays with the student · ⚪ not checked yet")
 TAGS = {"[CODE]": ("tag-code", "CODE"), "[LLM ]": ("tag-llm", "AI"), "[HUMAN]": ("tag-human", "HUMAN")}
 
 # ---- styling ---------------------------------------------------------------------------------------
@@ -132,9 +146,18 @@ def pill(route: str) -> str:
     return f'<span class="pill {cls}">{icon} {label}</span>'
 
 
-def fmt_reason(r: str) -> str:
-    code = re.match(r"[A-Z_]+", r)
-    return f"- `{code.group()}` {r[code.end():].lstrip(': ')}" if code else f"- {r}"
+def reason_line(r: str) -> str:
+    """'NEW_ACCOUNT: 5 days old [RCP-0263]' -> '- **The receiver's account is brand new**: 5 days old · `RCP-0263`'."""
+    m = re.match(r"([A-Z_]+):?\s*(.*?)\s*(?:\[([^\]]*)\])?\s*$", r, re.S)
+    if not m:
+        return f"- {r}"
+    code, detail, ids = m.groups()
+    plain = "Everything checks out" if code == "ALL_CLEAR" else REASON_TEXT.get(code, code.replace("_", " ").lower())
+    plain = plain[0].upper() + plain[1:]
+    out = f"- **{plain}**"
+    if detail and detail.lower() != plain.lower():
+        out += f": {detail}"
+    return out + (f" · `{ids}`" if ids else "")
 
 
 def field(label: str, value: str) -> str:
@@ -358,10 +381,10 @@ def page_home() -> None:
     st.markdown("#### How a payment is checked")
     steps = [("1", "Read the chat", "Screens the message for hidden AI instructions, scam signs and slang it can't "
               "read. The AI says how sure it is.", ["tag-code", "tag-llm"]),
-             ("2", "Check the facts", "get_transaction_context() and verify_campus_recipient(): who's paying, who's "
-              "receiving, trust score, reports.", ["tag-code"]),
-             ("3", "Decide", "Fixed rules: CLEAR, HOLD_FOR_CONFIRMATION or ESCALATE. Unsure means escalate, never "
-              "guess.", ["tag-code"]),
+             ("2", "Check the facts", "Looks up the student, their phone and who receives the money: verified shop? "
+              "new account? trust score? scam reports?", ["tag-code"]),
+             ("3", "Decide", "Fixed rules pick one of the 3 decisions below. If anything is unclear, a person checks; "
+              "the AI never guesses.", ["tag-code"]),
              ("4", "Explain", "The AI writes a friendly note for the student; code deletes claims without real records.",
               ["tag-llm", "tag-code"]),
              ("5", "A human decides", "The student confirms or cancels, or staff release or cancel. The state is saved, "
@@ -375,12 +398,36 @@ def page_home() -> None:
     st.caption("CODE = fixed, testable Python rules · AI = language model (reads and writes only) · "
                "HUMAN = the student or support staff. The AI can make a decision more careful, never less.")
 
+    st.markdown("#### The 3 possible decisions")
+    examples = {"CLEAR": "AED 15 at the Campus Canteen", "HOLD_FOR_CONFIRMATION": "AED 60 for a textbook from a "
+                "brand-new classmate account", "ESCALATE": "“Bro urgent! Selling my Front Row Fest pass…”"}
+    for col, (code, (emoji, title, meaning)) in zip(st.columns(3), DECISION_INFO.items()):
+        with col.container(border=True):
+            st.markdown(f"### {emoji} {title}")
+            st.markdown(meaning)
+            st.caption(f"Example: {examples[code]}")
+    st.caption("Pay Sentinel never freezes a wallet: it can only send, pause for the student, or pause for staff.")
+
+    st.markdown("#### Where to find things")
+    st.markdown("""
+| Step | Page | What it's for |
+|---|---|---|
+| 1 · Check payments | 📥 **Flagged payments** | The list of every flagged payment and its status. Tick rows to check several at once. |
+| | 🔍 **Payment details** | One payment, step by step: what it read, what it checked, what it decided and why. |
+| | ➕ **Add payments** | Type your own payment and message (or upload many) and see how it's handled. |
+| 2 · People decide | 📱 **Student app** | What the student sees on their phone: *I know this seller* or *Cancel transfer*. |
+| | 🧑‍💼 **Staff review** | The support team's queue: release or cancel payments sent to staff. |
+| 3 · Results | 📊 **Results** | Scams stopped, snacks cleared instantly, staff hours saved. |
+| | 📣 **Scam alerts** | One account targeting many students, plus a one-click warning to everyone. |
+| | 📜 **Activity log** | Every action, when it happened and who did it. |
+""")
+
     st.markdown("#### Try it")
     tries = [("Run the 12 test scenarios", "Canteen snacks, the Front Row Fest scam, fake PocketPay messages, "
               "3 unclear-slang cases, a hidden attack and a service outage.", "▶ Run 12 scenarios",
               lambda: (run_demo(), st.rerun())),
              ("Watch the ticket scam get caught", "The exact message from the brief, step by step.",
-              "🔍 Open the ticket scam", lambda: open_case(DEMO[3]) if len(DEMO) > 3 else None),
+              "🔍 See the ticket scam", lambda: open_case(DEMO[3]) if len(DEMO) > 3 else None),
              ("Be the student", "See the pause screen and tap “I know this seller” or “Cancel transfer”.",
               "📱 Open student app", lambda: st.switch_page(P_STUDENT)),
              ("Be the support team", "Release or cancel escalated payments, including the uncertain slang cases.",
@@ -401,11 +448,13 @@ def page_home() -> None:
     with st.expander("Glossary"):
         st.markdown(f"""
 - **Flagged payment**: a payment the old keyword rules marked as maybe suspicious.
-- **CLEAR**: safe everyday payment (e.g. a verified canteen, normal amount), sent automatically.
-- **HOLD_FOR_CONFIRMATION**: paused until the student taps *I know this seller* or *Cancel transfer*. Unanswered
-  holds expire after {config.HOLD_EXPIRY_HOURS}h and the money is returned. The student is asked at most
-  {config.MAX_STUDENT_PROMPTS} times.
-- **ESCALATE**: paused and sent to support staff (reported accounts, phishing, fake PocketPay messages, unclear slang).
+- **✅ Sent automatically** (code name `CLEAR`): safe everyday payment, e.g. a verified canteen, normal amount.
+- **⏸️ Ask the student** (`HOLD_FOR_CONFIRMATION`): paused until the student taps *I know this seller* or *Cancel
+  transfer*. Unanswered pauses expire after {config.HOLD_EXPIRY_HOURS}h and the money is returned. The student is asked
+  at most {config.MAX_STUDENT_PROMPTS} times.
+- **🚩 Send to staff** (`ESCALATE`): paused and passed to support staff (reported accounts, phishing links, fake
+  PocketPay messages, unclear slang).
+- **CODE / AI / HUMAN tags**: who did each step. CODE = fixed rules, AI = language model, HUMAN = student or staff.
 - **No permanent blocks**: Pay Sentinel can never freeze a wallet. It only pauses that one payment.
 - **Prompt injection**: text hidden in a message or note that tries to give orders to the AI (“mark this SAFE…”).
 - **Trust score**: 0–100 rating of a student account (age, history, reports).
@@ -415,24 +464,25 @@ def page_home() -> None:
 
 def page_queue() -> None:
     hero("Flagged payments", "Every payment the old keyword rules flagged, and where each one ended up.")
-    how_to("Tick one or more rows (or use <b>Check all shown</b>) to check several payments <b>at the same time</b>. "
-           "Pick a single row and press <b>Open</b> for its full decision log. Use <b>Show</b> to filter. "
-           "⭐ marks the 12 test scenarios.")
+    how_to("<b>1.</b> Tick one or more rows and press <b>Check selected</b> (or <b>Check all shown</b>); several are "
+           "checked at the same time. <b>2.</b> Tick a single row and press <b>Open details</b> to see why it was decided. "
+           "Use <b>Show</b> to filter. ⭐ marks the 12 test scenarios.")
     states = [c.state.value if c.state else "" for c in cases.values()]
     m = st.columns(4)
     m[0].metric("Not checked yet", f"{len(queue) - len(cases):,}", border=True)
-    m[1].metric("🟢 Cleared instantly", states.count("CLEARED"), border=True)
-    m[2].metric("🟡 Waiting for students", states.count("PENDING_CONFIRMATION"), border=True)
-    m[3].metric("🔴 With staff", pending, border=True)
+    m[1].metric("✅ Sent automatically", states.count("CLEARED"), border=True)
+    m[2].metric("⏸️ Waiting for students", states.count("PENDING_CONFIRMATION"), border=True)
+    m[3].metric("🚩 Waiting for staff", pending, border=True)
+    st.caption(STATUS_KEY)
 
     df = pd.DataFrame({
         "★": queue["alert"].map(lambda a: "⭐" if a in DEMO else ""),
         "Alert": queue["alert"], "Time": queue["time"], "Amount (AED)": queue["amount_aed"],
         "To": queue["recipient"], "Status": queue["alert"].map(state_text)})
     c1, c2 = st.columns([3, 2], vertical_alignment="bottom")
-    views = {"All": None, "Not checked": STATE_TEXT[""], "Cleared": STATE_TEXT["CLEARED"],
-             "Waiting for student": STATE_TEXT["PENDING_CONFIRMATION"], "With staff": STATE_TEXT["ESCALATED"],
-             "Finished by a human": "human", "⭐ Scenarios": "demo"}
+    views = {"All": None, "⚪ Not checked": STATE_TEXT[""], "✅ Sent": STATE_TEXT["CLEARED"],
+             "⏸️ Student": STATE_TEXT["PENDING_CONFIRMATION"], "🚩 Staff": STATE_TEXT["ESCALATED"],
+             "Decided by a person": "human", "⭐ Scenarios": "demo"}
     view = c1.segmented_control("Show", list(views), default="All") or "All"
     q = c2.text_input("Search", placeholder="🔎 Search alert ID or @handle", label_visibility="collapsed")
     if views[view] == "demo":
@@ -455,7 +505,7 @@ def page_queue() -> None:
     workers = ss.get("workers", workflow.DEFAULT_WORKERS)
     c1, c2, c3, c4 = st.columns([2.2, 1.2, 1.4, 1.3], vertical_alignment="center")
     c1.caption(f"Showing {len(df):,} of {len(queue):,} · {len(chosen)} selected · checks {workers} at a time")
-    if len(chosen) == 1 and c2.button(f"🔍 Open {chosen[0]}", width="stretch"):
+    if len(chosen) == 1 and c2.button("🔍 Open details", width="stretch", help=f"Open {chosen[0]}"):
         open_case(chosen[0])
     if c3.button(f"▶ Check {len(unchecked_sel)} selected", type="primary", width="stretch",
                  disabled=not unchecked_sel, help="Already-checked payments in your selection are skipped"):
@@ -468,103 +518,114 @@ def page_queue() -> None:
 
 def render_case(c: CaseFile) -> None:
     t = c.transaction
+    emoji, title, meaning = DECISION_INFO[c.final_route.value]
     with st.container(border=True):
-        h = st.columns([1, 1, 1.3, 1, 1.1])
-        h[0].markdown(field("Amount", f"{t.amount_aed:,.2f} AED"), unsafe_allow_html=True)
-        h[1].markdown(field("Student", t.student_id), unsafe_allow_html=True)
-        h[2].markdown(field("To", t.recipient_handle), unsafe_allow_html=True)
-        h[3].markdown(field("Type", f"{t.txn_type} · {t.channel}"), unsafe_allow_html=True)
-        h[4].markdown(field("Time", f"{t.ts:%d %b, %H:%M}"), unsafe_allow_html=True)
-        tag = " ❓ uncertain" if c.gate and c.gate.uncertain else ""
-        st.markdown(f'<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
-                    f'<span class="ps-label" style="margin:0">Decision</span>{pill(c.final_route.value)}'
-                    f'<span class="ps-value">{tag}</span>'
-                    f'<span class="ps-label" style="margin:0 0 0 10px">Payment state</span>'
-                    f'<span class="ps-value">{STATE_TEXT[c.state.value] if c.state else "not saved"}</span></div>',
-                    unsafe_allow_html=True)
+        a, b = st.columns([2.2, 1], vertical_alignment="top")
+        a.markdown(f"### {emoji} Decision: {title}")
+        a.markdown(meaning)
+        if c.final_route == Route.CLEAR:
+            why = "a verified campus shop or a trusted classmate, a normal amount, and no scam signs"
+        else:
+            why = ", ".join(plain_reasons(c.gate.reasons)[:4])
+        a.markdown(f"**Why:** {why}."
+                   + (" The message was too unclear to judge, so a person checks instead of the AI guessing."
+                      if c.gate.uncertain else ""))
+        b.markdown(field("Right now", STATE_TEXT[c.state.value] if c.state else "Not saved"), unsafe_allow_html=True)
+        b.markdown(field("Amount", f"{t.amount_aed:,.2f} AED"), unsafe_allow_html=True)
+        b.markdown(field("From → to", f"{t.student_id} → {t.recipient_handle}"), unsafe_allow_html=True)
+        b.caption(f"{'Purchase' if t.txn_type == 'PURCHASE' else 'Transfer to a student'} · {t.channel} · "
+                  f"{t.ts:%d %b, %H:%M} · {t.record_id}")
     if c.investigation:
         st.info(f"**What the student sees:** {c.investigation.student_explanation}", icon="📱")
 
-    left, right = st.columns([1.05, 1], gap="large")
-    with left, st.container(border=True):
-        st.markdown("##### Decision log")
+    t_steps, t_msg, t_ev, t_rep = st.tabs(["📖 Step by step", "💬 The message", "🔍 Evidence & rules", "📄 Full report"])
+    with t_steps:
+        st.caption("Every step, in order. Tags show who did it: **CODE** = fixed rules · **AI** = language model "
+                   "(reads and writes only) · **HUMAN** = the student or support staff.")
         st.markdown(trace_html(c.trace), unsafe_allow_html=True)
         for e in c.errors:
-            st.warning(e)
-    with right, st.container(border=True):
-        st.markdown("##### Chat message")
+            st.warning(f"A check had a problem, so the payment was paused instead of guessing: {e}", icon="⚠️")
+    with t_msg:
         if c.chat is None and c.memo is None:
-            st.caption("No message or note came with this payment.")
-        inj = any(s and s.injection_detected for s in (c.chat, c.memo))
-        if inj:
-            st.error("**Hidden instructions to the AI were found and removed.**", icon="🚨")
+            st.info("No message or note came with this payment, so there was nothing to read.", icon="💬")
+        if any(s_ and s_.injection_detected for s_ in (c.chat, c.memo)):
+            st.error("**Hidden instructions to the AI were found and removed** before any AI read the message.",
+                     icon="🚨")
         if c.signals and c.signals.signals:
-            st.warning("Scam signs: " + ", ".join(SIGNAL_TEXT.get(s, s) for s in c.signals.signals), icon="⚠️")
+            st.warning("**Scam signs:** " + ", ".join(SIGNAL_TEXT.get(x, x) for x in c.signals.signals), icon="⚠️")
         if c.signals and c.signals.unclear_terms:
-            st.warning("Slang the rules can't read: " + ", ".join(c.signals.unclear_terms), icon="❓")
+            st.warning("**Slang the rules can't read:** " + ", ".join(c.signals.unclear_terms), icon="❓")
         if c.assessment:
-            a = c.assessment
-            st.caption(f"AI reading: **{a.scam_risk}** risk, **{a.confidence:.0%}** sure. {a.summary}")
+            a_ = c.assessment
+            st.markdown(f"**The AI's reading:** {a_.scam_risk.lower()} scam risk, {a_.confidence:.0%} sure. "
+                        f"{a_.summary}")
         if c.chat:
-            st.markdown("**Original message** · untrusted")
-            st.code(visible_text(c.chat.original), language=None, wrap_lines=True)
-            st.markdown("**What the AI was allowed to read**")
-            st.code(c.chat.clean_text or "(empty)", language=None, wrap_lines=True)
+            l, r = st.columns(2)
+            with l:
+                st.markdown("**What the student received** (untrusted)")
+                st.code(visible_text(c.chat.original), language=None, wrap_lines=True)
+            with r:
+                st.markdown("**What the AI was allowed to read**")
+                st.code(c.chat.clean_text or "(empty)", language=None, wrap_lines=True)
         if c.memo:
-            st.markdown("**Payment note** · untrusted")
+            st.markdown("**Payment note** (untrusted)")
             st.code(visible_text(c.memo.original), language=None, wrap_lines=True)
-
-    with st.container(border=True):
-        st.markdown("##### Fixed payment rules · deterministic Python")
+    with t_ev:
+        st.markdown("##### The fixed rules that decided it")
         box = {Route.CLEAR: st.success, Route.HOLD_FOR_CONFIRMATION: st.warning, Route.ESCALATE: st.error}[c.gate.route]
-        box("\n".join(fmt_reason(r) for r in c.gate.reasons))
-
-    with st.expander("Evidence from the tools"):
+        box("\n".join(reason_line(r) for r in c.gate.reasons))
+        st.caption("These rules are plain Python, not AI. The grey codes are the records each reason is based on.")
+        st.markdown("##### Who is paying")
         if c.context:
             x = c.context
             e = st.columns(4)
-            e[0].markdown(field("Student", f"{x.student.full_name} · {x.student.record_id}"), unsafe_allow_html=True)
+            e[0].markdown(field("Student", f"{x.student.full_name}"), unsafe_allow_html=True)
             e[1].markdown(field("Grade", x.student.grade), unsafe_allow_html=True)
-            e[2].markdown(field("PocketPay since", str(x.student.joined_on)), unsafe_allow_html=True)
-            e[3].markdown(field("Payments in 24h", str(x.velocity.txn_count)), unsafe_allow_html=True)
-            st.markdown("**Devices**")
-            st.dataframe(pd.DataFrame([d.model_dump() | {"used_now": d.record_id == t.device_id}
-                                       for d in x.devices]), hide_index=True, width="stretch")
-        if c.recipient:
-            rc = c.recipient
-            if rc.recipient:
-                r = rc.recipient
-                st.markdown(f"**Recipient** `{r.record_id}` · {r.display_name} ({r.handle}) · "
-                            f"{'✅ verified campus vendor' if rc.verified_vendor else 'student account'} · "
-                            f"{rc.account_age_days} days old · trust {r.trust_score}/100 · {r.scam_reports} report(s)")
-            else:
-                st.markdown(f"**Recipient** {rc.handle}: not a known PocketPay account")
+            e[2].markdown(field("On PocketPay since", str(x.student.joined_on)), unsafe_allow_html=True)
+            e[3].markdown(field("Payments in the last 24h", str(x.velocity.txn_count)), unsafe_allow_html=True)
+            dev = next((d for d in x.devices if d.record_id == t.device_id), None)
+            if dev:
+                age = (t.ts.date() - dev.first_seen).days
+                st.caption(f"Paid from {'their usual' if dev.trusted and age >= config.NEW_DEVICE_DAYS else 'a new'} "
+                           f"phone ({dev.os}, first seen {age} days earlier).")
         else:
-            st.markdown("**Recipient**: the check timed out. The payment paused instead of guessing.")
+            st.caption("Couldn't load the student's details.")
+        st.markdown("##### Who receives the money")
+        if c.recipient and c.recipient.recipient:
+            r_ = c.recipient.recipient
+            e = st.columns(4)
+            e[0].markdown(field("Account", f"{r_.display_name} ({r_.handle})"), unsafe_allow_html=True)
+            e[1].markdown(field("Type", "✅ Verified campus shop" if c.recipient.verified_vendor else "Student account"),
+                          unsafe_allow_html=True)
+            e[2].markdown(field("Account age · trust", f"{c.recipient.account_age_days} days · {r_.trust_score}/100"),
+                          unsafe_allow_html=True)
+            e[3].markdown(field("Scam reports", str(r_.scam_reports)), unsafe_allow_html=True)
+        elif c.recipient:
+            st.caption(f"{c.recipient.handle} is not a known PocketPay account.")
+        else:
+            st.caption("The recipient check timed out, so the payment paused instead of guessing.")
         if c.spread:
-            st.markdown(f"**Reach** `{c.spread.record_id}` · {c.spread.distinct_students} student(s) within a day")
-
-    if c.investigation and c.investigation.findings:
-        with st.container(border=True):
-            st.markdown("##### Findings · AI, citations verified by code")
-            st.dataframe(pd.DataFrame([{"Finding": f.claim, "Citations": ", ".join(f.citations)}
+            st.caption(f"This account messaged or was paid by {c.spread.distinct_students} student(s) within a day.")
+        if c.investigation and c.investigation.findings:
+            st.markdown("##### What the AI found (every claim checked against real records)")
+            st.dataframe(pd.DataFrame([{"Finding": f.claim, "Based on": ", ".join(f.citations)}
                                        for f in c.investigation.findings]), hide_index=True, width="stretch")
             if c.dropped_findings:
-                st.warning("Dropped by citation check (cited IDs not in evidence): " +
-                           "; ".join(f"“{f.claim}” → {f.citations}" for f in c.dropped_findings), icon="✂️")
-            st.markdown(f"**Staff summary.** {c.investigation.staff_summary}")
-    if c.report_markdown:
-        with st.expander("📄 Full decision log (shareable)"):
-            st.download_button("Download decision log (.md)", c.report_markdown,
-                               file_name=f"DECISION_LOG_{t.record_id}.md")
+                st.warning("Deleted because they cited records that don't exist: " +
+                           "; ".join(f"“{f.claim}”" for f in c.dropped_findings), icon="✂️")
+            st.markdown(f"**Summary for staff:** {c.investigation.staff_summary}")
+    with t_rep:
+        if c.report_markdown:
+            st.caption("The same information as one shareable document, with every fact linked to its record.")
+            st.download_button("⬇️ Download report (.md)", c.report_markdown, file_name=f"DECISION_LOG_{t.record_id}.md")
             st.markdown(c.report_markdown)
 
 
 def page_investigation() -> None:
-    hero("Investigation", "Watch one flagged payment go through the checks, step by step.")
-    how_to("Choose a payment and press <b>Check payment</b>. The <b>decision log</b> (left) shows each step tagged "
-           "CODE, AI or HUMAN, at least three automatic steps before any decision. The <b>chat panel</b> (right) "
-           "shows the original message next to what the AI was allowed to read.")
+    hero("Payment details", "One flagged payment: what Pay Sentinel read, checked and decided, and why.")
+    how_to("Pick a payment and press <b>Check payment</b> to watch it live. The card at the top gives the "
+           "<b>decision and why</b>. The tabs below show <b>each step</b>, <b>the message</b>, <b>the evidence</b> and a "
+           "<b>shareable report</b>.")
     order = DEMO + [a for a in queue["alert"] if a not in DEMO]
     info = queue.set_index("alert")
 
@@ -586,7 +647,7 @@ def page_investigation() -> None:
     if existing:
         render_case(existing)
     else:
-        st.info("Not checked yet. Press **Check payment** to watch the agents work.", icon="🔍")
+        st.info("Not checked yet. Press **Check payment** to watch each step happen live.", icon="🔍")
 
 
 def page_student() -> None:
@@ -652,7 +713,8 @@ def page_gate() -> None:
            "or fake PocketPay messages. Your staff ID comes from your signed session. Try the <b>Guard tests</b> "
            "at the bottom.")
     if not STAFF_Q:
-        st.success("All clear: nothing is waiting for staff. Past decisions are in the **Audit log**.", icon="✅")
+        st.success("All clear: nothing is waiting for staff. Past decisions are in the **Activity log**. "
+                   "To fill this page, press **▶ Run 12 test scenarios** in the sidebar.", icon="✅")
     else:
         def case_label(a: str) -> str:
             c0 = cases[a]
@@ -668,7 +730,7 @@ def page_gate() -> None:
             h[1].markdown(field("To", c.transaction.recipient_handle), unsafe_allow_html=True)
             h[2].markdown(field("Student", c.transaction.student_id), unsafe_allow_html=True)
             h[3].markdown(field("Why", "❓ Uncertain" if c.gate.uncertain else "🚨 Scam signs"), unsafe_allow_html=True)
-        st.error("**Why it's here:**\n" + "\n".join(f"- {r}" for r in c.gate.reasons), icon="🛑")
+        st.error("**Why it was sent to staff:**\n" + "\n".join(reason_line(r) for r in c.gate.reasons), icon="🚩")
         if c.chat:
             st.markdown("**The message the student received:**")
             st.code(visible_text(c.chat.original), language=None, wrap_lines=True)
@@ -679,7 +741,7 @@ def page_gate() -> None:
         with st.container(border=True):
             st.markdown("##### Your decision")
             st.caption(f"Signing as **{officer}**.")
-            note = st.text_area("Note", placeholder="Reason (stored in the audit log)")
+            note = st.text_area("Note (optional)", placeholder="Why you decided this (saved in the activity log)")
             b = st.columns(3)
             choices = [("✅ Release payment", "STAFF_RELEASE", "secondary"),
                        ("↩️ Cancel this transfer", "STAFF_CANCEL", "primary"),
@@ -823,7 +885,7 @@ def page_campaigns() -> None:
 
 
 def page_roi() -> None:
-    hero("Results & ROI", "Staff time saved, scams stopped and AI cost across checked payments.")
+    hero("Results", "Did it work? Scams stopped, everyday payments cleared instantly, and staff time saved.")
     if not tel.triaged:
         st.info("Run some payments (sidebar) to fill in the dashboard.", icon="📊")
         return
@@ -848,8 +910,10 @@ def page_roi() -> None:
     with st.container(border=True):
         st.markdown("##### Where each payment went, by true label")
         odf = pd.DataFrame(tel.outcome)
-        order = [r.value for r in Route]
-        odf["order"] = odf["route"].map(order.index)
+        codes = [r.value for r in Route]
+        odf["order"] = odf["route"].map(codes.index)
+        odf["route"] = odf["route"].map(lambda r: f"{DECISION_INFO[r][0]} {DECISION_INFO[r][1]}")
+        order = [f"{DECISION_INFO[r][0]} {DECISION_INFO[r][1]}" for r in codes]
         chart = (alt.Chart(odf[odf["count"] > 0])
                  .mark_bar(stroke=SURFACE, strokeWidth=2, size=26)
                  .encode(y=alt.Y("true_class:N", sort=["Safe", "Scam", "Uncertain", "Hidden instructions"], title=None),
@@ -890,9 +954,9 @@ ACTION_TEXT = {"CLEAR": "🟢 Cleared", "HOLD_FOR_CONFIRMATION": "🟡 Held for 
 
 
 def page_audit() -> None:
-    hero("Audit log", "A permanent record of every state change: what happened, to which payment, and who did it.")
-    how_to("<b>System</b> = automatic steps taken by code. <code>student:</code> and <code>staff:</code> = human "
-           "decisions. Turn on <b>Show details</b> for the rule-based reasons behind each step.")
+    hero("Activity log", "Every action ever taken on a payment: what happened, when, and who did it.")
+    how_to("<b>system</b> = an automatic step by the fixed rules. <b>student:…</b> and <b>staff:…</b> = a person's "
+           "decision. Turn on <b>Show details</b> to see the reasons behind each step.")
     recs = services.list_resolutions()
     if not recs:
         st.info("Nothing recorded yet. Check some payments first.", icon="📜")
@@ -983,7 +1047,7 @@ def page_add() -> None:
                                             Status=STATE_TEXT[cur[r["alert_id"]].state.value]
                                             if r["alert_id"] in cur and cur[r["alert_id"]].state else STATE_TEXT[""])
                                        for r in rows]), hide_index=True, width="stretch")
-            if len(rows) == 1 and st.button(f"🔍 Open {rows[0]['alert_id']} in Investigation", type="primary"):
+            if len(rows) == 1 and st.button(f"🔍 See how {rows[0]['alert_id']} was decided", type="primary"):
                 open_case(rows[0]["alert_id"])
             if not last["triaged"]:
                 st.caption("Use ▶ Check the next batch (sidebar → More tools) to check them.")
@@ -1085,17 +1149,17 @@ def page_add() -> None:
 # ---- navigation + sidebar ---------------------------------------------------------------------------------
 P_HOME = st.Page(page_home, title="Start here", icon="🏠", url_path="start", default=True)
 P_QUEUE = st.Page(page_queue, title="Flagged payments", icon="📥", url_path="queue")
-P_INVESTIGATE = st.Page(page_investigation, title="Investigation", icon="🔍", url_path="investigation")
+P_INVESTIGATE = st.Page(page_investigation, title="Payment details", icon="🔍", url_path="details")
 P_STUDENT = st.Page(page_student, title=f"Student app ({len(STUDENT_Q)})", icon="📱", url_path="student")
 P_GATE = st.Page(page_gate, title=f"Staff review ({pending})", icon="🧑‍💼", url_path="staff-review")
 P_ADD = st.Page(page_add, title="Add payments", icon="➕", url_path="add")
-P_ROI = st.Page(page_roi, title="Results & ROI", icon="📊", url_path="roi")
+P_ROI = st.Page(page_roi, title="Results", icon="📊", url_path="results")
 P_CAMPAIGNS = st.Page(page_campaigns, title="Scam alerts", icon="📣", url_path="scam-alerts")
 nav = st.navigation({
     "": [P_HOME],
-    "Work": [P_QUEUE, P_INVESTIGATE, P_STUDENT, P_GATE, P_ADD],
-    "Insights": [P_ROI, P_CAMPAIGNS],
-    "Records": [st.Page(page_audit, title="Audit log", icon="📜", url_path="audit-log")],
+    "1 · Check payments": [P_QUEUE, P_INVESTIGATE, P_ADD],
+    "2 · People decide": [P_STUDENT, P_GATE],
+    "3 · Results": [P_ROI, P_CAMPAIGNS, st.Page(page_audit, title="Activity log", icon="📜", url_path="activity-log")],
 })
 
 with st.sidebar:
@@ -1114,6 +1178,15 @@ with st.sidebar:
                       "hidden in a note and a service outage"):
         run_demo()
         st.rerun()
+    with st.expander("❓ How to read this app"):
+        st.markdown("**The 3 decisions**\n\n"
+                    + "\n".join(f"- {e} **{t}**: {m.split('.')[0]}." for e, t, m in DECISION_INFO.values())
+                    + "\n\nNo wallet is ever frozen.\n\n"
+                      "**Who did each step**\n- **CODE**: fixed, testable rules\n- **AI**: language model, reads and "
+                      "writes only; it can make a decision more careful, never less\n- **HUMAN**: the student or "
+                      "support staff\n\n"
+                      "**Record codes**: `TXN` payment · `STU` student · `RCP` receiver · `MSG` chat message · "
+                      "`DEV` phone")
     with st.expander("⚙️ More tools"):
         ss.use_llm = st.toggle("Use AI agents", value=ss.get("use_llm", True),
                                help="Off = rules only (message scanners + fixed payment rules), no AI reading.")

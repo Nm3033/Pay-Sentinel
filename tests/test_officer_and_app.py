@@ -118,8 +118,8 @@ def test_login_then_start_page(officer_passwords):
     assert at.session_state["token"] and any("Start here" in md.value for md in at.markdown)
 
 
-@pytest.mark.parametrize("key,heading", [("try2", "Investigation"), ("try3", "Student app"), ("try4", "Staff review"),
-                                         ("try5", "Add payments"), ("try6", "Results &amp; ROI"),
+@pytest.mark.parametrize("key,heading", [("try2", "Payment details"), ("try3", "Student app"), ("try4", "Staff review"),
+                                         ("try5", "Add payments"), ("try6", "Results"),
                                          ("try7", "Scam alerts")])
 def test_every_guided_page_renders(conn, officer_passwords, key, heading):
     for n in (4, 5):   # put one case with staff and one with a student so those pages have content
