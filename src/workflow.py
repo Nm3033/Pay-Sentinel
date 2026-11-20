@@ -251,6 +251,18 @@ def _screen_steps(label: str, s, raw: str) -> list[str]:
     return out
 
 
+def _answered_by(usage: list[dict]) -> str:
+    """' (answered by X)' or ' (answered by backup AI X: A unavailable)' for the decision log."""
+    if not usage:
+        return ""
+    last = usage[-1]
+    failed = last.get("after_failures")
+    if not failed:
+        return f" (answered by {last.get('model', 'AI')})"
+    names = ", ".join(f.split(" (")[0] for f in failed)
+    return f" (answered by backup AI {last.get('model', 'AI')}: {names} unavailable)"
+
+
 def _route_action(r: Route) -> Action:
     return {Route.CLEAR: Action.CLEAR, Route.HOLD_FOR_CONFIRMATION: Action.HOLD_FOR_CONFIRMATION,
             Route.ESCALATE: Action.ESCALATE}[r]
@@ -310,10 +322,10 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                 if a.confidence < config.CONFIDENCE_MIN:
                     _step(case, f"[LLM ] AI read the message but is only {a.confidence:.0%} sure what it means"
                                 + (f" (unclear: {', '.join(a.unclear_terms[:4])})" if a.unclear_terms else "")
-                                + ". It won't guess, so a person will check it.")
+                                + ". It won't guess, so a person will check it." + _answered_by(usage))
                 else:
                     _step(case, f"[LLM ] AI read the message: {a.scam_risk.lower()} scam risk, {a.confidence:.0%} sure. "
-                                f"{a.summary}")
+                                f"{a.summary}" + _answered_by(usage))
                     llm_route = {"HIGH": Route.ESCALATE, "MEDIUM": Route.HOLD_FOR_CONFIRMATION}.get(a.scam_risk)
             except LLMError as e:
                 case.errors.append(f"assessor: {e}")
@@ -340,7 +352,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                 case.investigation, case.dropped_findings = out, dropped
                 llm_route = route(llm_route or Route.CLEAR, out.suggested_route)
                 _step(case, f"[LLM ] AI wrote a plain-language explanation for the student and a summary for staff "
-                            f"({len(out.findings) + len(dropped)} finding(s)).")
+                            f"({len(out.findings) + len(dropped)} finding(s))." + _answered_by(usage))
                 _step(case, f"[CODE] Checked every finding against PocketPay's records: kept {len(out.findings)}"
                             + (f", deleted {len(dropped)} that cited records that don't exist." if dropped
                                else "; all are backed by real records."))

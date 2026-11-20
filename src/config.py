@@ -60,6 +60,24 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))  # generous: reasoning
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low" if "gpt-oss" in LLM_MODEL else "")
 SANITIZER_USE_LLM = os.getenv("SANITIZER_USE_LLM", "true").lower() == "true"
 
+# Backup AIs, tried in order when the one before fails or is rate-limited (then: rules only).
+# LLM_FALLBACK_<n>_MODEL is required; BASE_URL and API_KEY default to the primary's (e.g. another Groq model
+# with its own quota). n = 1..3.
+def read_fallbacks(env=os.environ) -> list[dict]:
+    out = []
+    for i in range(1, 4):
+        model = env.get(f"LLM_FALLBACK_{i}_MODEL", "").strip()
+        if model:
+            out.append(dict(
+                model=model,
+                base_url=env.get(f"LLM_FALLBACK_{i}_BASE_URL", "").strip() or LLM_BASE_URL,
+                api_key=env.get(f"LLM_FALLBACK_{i}_API_KEY", "").strip() or LLM_API_KEY,
+                reasoning_effort=env.get(f"LLM_FALLBACK_{i}_REASONING_EFFORT", "low" if "gpt-oss" in model else "")))
+    return out
+
+
+LLM_FALLBACKS: list[dict] = read_fallbacks()
+
 # ---- ROI telemetry (reporting assumptions only; never used for routing) ------------
 STAFF_MIN_PER_REVIEW: float = 5.0     # ASSUMPTION: minutes for the 2-person team to review one flagged item by hand
 STAFF_MIN_ASSISTED: float = 2.0       # ASSUMPTION: minutes for an escalated case with summary + evidence ready

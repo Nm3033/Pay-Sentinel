@@ -3,14 +3,26 @@ import pytest
 from src import auth, config, seed_data, services
 
 
+_TEST_OFFICERS: dict = {}
+
+
 @pytest.fixture(scope="session", autouse=True)
 def officer_passwords(tmp_path_factory):
     """Isolated staff-account store for the whole test run; returns {staff_id: password}."""
     original = config.OFFICERS_PATH
-    config.OFFICERS_PATH = tmp_path_factory.mktemp("auth") / "officers.json"
+    config.OFFICERS_PATH = _TEST_OFFICERS["path"] = tmp_path_factory.mktemp("auth") / "officers.json"
     pw = auth.init_store()
     yield pw
     config.OFFICERS_PATH = original
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_real_data(officer_passwords, db_path, monkeypatch):
+    """Safety net: before EVERY test, point accounts and data at the private test copies, so no test (even one
+    that misbehaves) can ever reach the real data/officers.json or the real database."""
+    monkeypatch.setattr(config, "OFFICERS_PATH", config.OFFICERS_PATH if "pytest" in str(config.OFFICERS_PATH)
+                        else _TEST_OFFICERS["path"])
+    monkeypatch.setattr(config, "DB_PATH", db_path)
 
 
 @pytest.fixture

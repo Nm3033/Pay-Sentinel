@@ -71,7 +71,7 @@ class LLMClient:
     def __init__(self, base_url: str = config.LLM_BASE_URL, model: str = config.LLM_MODEL,
                  api_key: str = config.LLM_API_KEY, timeout: float = config.LLM_TIMEOUT_S,
                  max_tokens: int = config.LLM_MAX_TOKENS,
-                 reasoning_effort: str = config.LLM_REASONING_EFFORT):
+                 reasoning_effort: str = config.LLM_REASONING_EFFORT, rate_limit_retries: int = 3):
         from openai import OpenAI  # imported lazily so code-only paths/tests don't need it
 
         self.model = model
@@ -81,6 +81,7 @@ class LLMClient:
         self._client = OpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout, max_retries=0)
         self.usage_log: list[dict] = []
         self._blocked_until = 0.0     # set when the provider says "try again in N minutes"
+        self.rate_limit_retries = rate_limit_retries   # fewer when a backup AI can take over
 
     # ---- low level ----------------------------------------------------------------
     def _complete(self, messages: list[dict], purpose: str) -> str:
@@ -94,7 +95,7 @@ class LLMClient:
         wait = self._blocked_until - time.time()
         if wait > 0:   # quota exhausted earlier: don't hammer the API, fail fast so the case falls back to code
             raise LLMError(f"AI quota exhausted; retry in {wait / 60:.0f} min")
-        for attempt in range(4):
+        for attempt in range(self.rate_limit_retries + 1):
             t0 = time.perf_counter()
             try:
                 resp = self._client.chat.completions.create(**kwargs)
@@ -103,7 +104,7 @@ class LLMClient:
                 if retry_after > MAX_RATE_LIMIT_WAIT_S:   # e.g. daily token quota: waiting won't help this batch
                     self._blocked_until = time.time() + retry_after
                     raise LLMError(f"rate limited for {retry_after / 60:.0f} min: {e}") from e
-                if attempt == 3:
+                if attempt >= self.rate_limit_retries:
                     raise LLMError(f"rate limited: {e}") from e
                 time.sleep(max(retry_after, 2 ** (attempt + 1)))
                 continue
@@ -149,6 +150,52 @@ class LLMClient:
         raise LLMError(f"invalid {model_cls.__name__} after retry: {last_err}")
 
 
+class FallbackLLM:
+    """Tries each AI in order; moves to the next one on ANY failure (rate limit, quota, outage, unusable reply).
+    A provider that said "wait N minutes" is skipped until then. If every AI fails, raises LLMError and the
+    caller falls back to the rules-only path. Same chat_json() contract as LLMClient."""
+
+    def __init__(self, clients: list):
+        if not clients:
+            raise ValueError("FallbackLLM needs at least one client")
+        self.clients = clients
+        self.model = clients[0].model
+
+    @property
+    def models(self) -> list[str]:
+        return [c.model for c in self.clients]
+
+    @property
+    def usage_log(self) -> list[dict]:
+        return [u for c in self.clients for u in getattr(c, "usage_log", [])]
+
+    def chat_json(self, system: str, user: str, model_cls: type[T], *, purpose: str = "") -> T:
+        failed: list[str] = []
+        for client in self.clients:
+            wait = getattr(client, "_blocked_until", 0.0) - time.time()
+            if wait > 0:
+                failed.append(f"{client.model} (rate-limited, retry in {wait / 60:.0f} min)")
+                continue
+            try:
+                result = client.chat_json(system, user, model_cls, purpose=purpose)
+            except LLMError as e:
+                failed.append(f"{client.model} ({str(e)[:80]})")
+                continue
+            if failed:   # annotate this call's usage entry so the decision log can say a backup answered
+                sink = USAGE_SINK.get()
+                if sink:
+                    sink[-1]["after_failures"] = list(failed)
+            return result
+        raise LLMError("all AI providers unavailable: " + "; ".join(failed))
+
+
 @lru_cache(maxsize=1)
-def get_llm() -> LLMClient:
-    return LLMClient()
+def get_llm() -> FallbackLLM:
+    """The primary AI from .env / secrets, followed by any configured backups."""
+    has_backup = bool(config.LLM_FALLBACKS)
+    clients = [LLMClient(rate_limit_retries=1 if has_backup else 3)]   # switch quickly when a backup exists
+    for i, fb in enumerate(config.LLM_FALLBACKS):
+        last = i == len(config.LLM_FALLBACKS) - 1
+        clients.append(LLMClient(base_url=fb["base_url"], model=fb["model"], api_key=fb["api_key"],
+                                 reasoning_effort=fb["reasoning_effort"], rate_limit_retries=3 if last else 1))
+    return FallbackLLM(clients)

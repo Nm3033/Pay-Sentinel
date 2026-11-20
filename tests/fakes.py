@@ -16,11 +16,12 @@ class FakeLLM:
     def chat_json(self, system, user, model_cls, *, purpose=""):
         self.calls.append(purpose)
         self.seen.setdefault(purpose, []).append(user)
-        entry = dict(purpose=purpose, model="fake", latency_s=0.0, prompt_tokens=len(user) // 4, completion_tokens=50)
+        if purpose in self.fail:          # like the real client: a failed call returns no usage
+            raise LLMError(f"fake {purpose} failure")
+        entry = dict(purpose=purpose, model=getattr(self, "model", "fake"), latency_s=0.0,
+                     prompt_tokens=len(user) // 4, completion_tokens=50)
         self.usage_log.append(entry)
         record_usage(entry)
-        if purpose in self.fail:
-            raise LLMError(f"fake {purpose} failure")
         if model_cls is SanitizerVerdict:
             return self.sanitizer
         if model_cls is MessageAssessment:

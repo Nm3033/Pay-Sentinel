@@ -942,6 +942,14 @@ def page_roi() -> None:
                 help=f"{tel.findings_kept} citation-verified findings kept")
     if tel.by_purpose:
         st.dataframe(pd.DataFrame(tel.by_purpose), hide_index=True, width="stretch")
+    usage = [u for c in cases.values() for u in c.llm_usage]
+    if usage:
+        per_model: dict[str, int] = {}
+        for u in usage:
+            per_model[u.get("model", "?")] = per_model.get(u.get("model", "?"), 0) + 1
+        backups = sum(1 for u in usage if u.get("after_failures"))
+        st.caption("Answered by: " + " · ".join(f"`{m}` {n} call(s)" for m, n in per_model.items())
+                   + (f" · a backup AI took over {backups} time(s)" if backups else ""))
     st.caption(f"Assumptions: the 2-person team reviews ~200 flagged payments + 20 messages a day at "
                f"~{config.STAFF_MIN_PER_REVIEW:.0f} min each; an escalated case with summary ready takes "
                f"~{config.STAFF_MIN_ASSISTED:.0f} min; cleared payments and student-settled holds take no staff time.")
@@ -1196,7 +1204,10 @@ with st.sidebar:
                                value=ss.get("workers", workflow.DEFAULT_WORKERS),
                                help="Checks run in parallel; AI calls dominate the time, so more at once is faster. "
                                     "Keep it modest on free-tier AI keys (rate limits).")
-        st.caption(f"Model: `{config.LLM_MODEL}`")
+        chain = [config.LLM_MODEL] + [fb["model"] for fb in config.LLM_FALLBACKS]
+        st.caption("AI order: " + " → ".join(f"`{m}`" for m in chain) + " → rules only",
+                   help="If an AI fails or hits its rate limit, the next one takes over automatically. "
+                        "If all are unavailable, payments are still decided by the fixed rules.")
         st.markdown("**Check the next payments**")
         c1, c2 = st.columns([1, 1.3], vertical_alignment="bottom")
         n = c1.number_input("How many", min_value=1, max_value=1000, value=20, label_visibility="collapsed")

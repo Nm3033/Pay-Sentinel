@@ -31,6 +31,10 @@ cp .env.example .env              # then add an AI key (Groq / Gemini) or use lo
 python -m src.auth init           # creates staff accounts SUP-01, SUP-02 (passwords printed once)
 streamlit run app.py              # the demo dataset is generated automatically on first start
 ```
+**Backup AIs:** set `LLM_FALLBACK_1_MODEL` (and optionally `_BASE_URL` / `_API_KEY`, up to 3 backups) in `.env`
+or the Streamlit secrets. If the primary AI fails or hits its rate limit, the next one answers automatically, and
+the decision log says which AI answered. If all are down, the fixed rules still decide every payment.
+
 No AI key? Turn **Use AI agents** off in the sidebar (⚙️ More tools): the fixed rules still catch every scam.
 
 Command line:
