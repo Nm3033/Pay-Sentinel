@@ -1,0 +1,45 @@
+[server]
+runOnSave = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseRadius = "0.6rem"
+showWidgetBorder = true
+showSidebarBorder = false
+
+[theme.light]
+primaryColor = "#0f4c81"
+backgroundColor = "#f6f7f9"
+secondaryBackgroundColor = "#eceff3"
+textColor = "#1b2330"
+linkColor = "#0f4c81"
+borderColor = "#dde2e8"
+dataframeBorderColor = "#e3e7ec"
+
+[theme.light.sidebar]
+backgroundColor = "#0f2a44"
+secondaryBackgroundColor = "#173a5c"
+textColor = "#e8eef5"
+primaryColor = "#2f7fd1"
+borderColor = "#2a4a6b"
+
+[theme.dark]
+primaryColor = "#5b9be0"
+backgroundColor = "#0e131a"
+secondaryBackgroundColor = "#18202b"
+textColor = "#e6e9ee"
+linkColor = "#7fb3e6"
+borderColor = "#2a3442"
+dataframeBorderColor = "#263040"
+
+[theme.dark.sidebar]
+backgroundColor = "#0a1a2b"
+secondaryBackgroundColor = "#12283f"
+textColor = "#e6e9ee"
+primaryColor = "#2f7fd1"
+borderColor = "#1f3a57"

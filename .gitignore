@@ -1,0 +1,11 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/officers.json
+data/*.tmp
+reports/
