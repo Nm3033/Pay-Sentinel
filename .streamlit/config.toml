@@ -4,19 +4,9 @@ runOnSave = false
 [browser]
 gatherUsageStats = false
 
-# One light theme for every visitor: white pages with light-blue accents (decorations and buttons are in app.py CSS).
-# There is deliberately no [theme.dark] section: with both a light and a dark theme, Streamlit follows the
-# visitor's device setting, so dark-mode laptops would get a dark site.
+# Two themes: visitors switch with the ⋮ menu (System / Light / Dark); "System" follows the device setting.
+# Decorations and buttons are styled in app.py and follow whichever theme is active.
 [theme]
-base = "light"
-primaryColor = "#1976d2"              # blue for focus rings, checkboxes, selected tabs (4.6:1 on white)
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#eef7ff"  # light-blue input boxes, code, table headers
-textColor = "#10284a"                 # deep navy ink (14.7:1 on white)
-linkColor = "#1565c0"
-borderColor = "#cfe6fb"
-dataframeBorderColor = "#e1effc"
-dataframeHeaderBackgroundColor = "#eaf5ff"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
@@ -25,9 +15,38 @@ paddingTop = "1rem"                   # gap under the top bar (Streamlit adds th
 showWidgetBorder = true
 showSidebarBorder = true
 
-[theme.sidebar]
-backgroundColor = "#e8f4ff"           # light blue
+# Light: white pages with light-blue elements
+[theme.light]
+primaryColor = "#1976d2"              # focus rings, checkboxes, selected tabs (4.6:1 on white)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef7ff"  # light-blue input boxes, code, table headers
+textColor = "#10284a"                 # deep navy ink (14.7:1 on white)
+linkColor = "#1565c0"
+borderColor = "#cfe6fb"
+dataframeBorderColor = "#e1effc"
+dataframeHeaderBackgroundColor = "#eaf5ff"
+
+[theme.light.sidebar]
+backgroundColor = "#e8f4ff"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#10284a"
 primaryColor = "#1976d2"
 borderColor = "#cfe6fb"
+
+# Dark: deep night-blue pages, the same light-blue buttons and bubbles glowing softly
+[theme.dark]
+primaryColor = "#6cb8ff"
+backgroundColor = "#0b1830"
+secondaryBackgroundColor = "#13264a"
+textColor = "#e4efff"
+linkColor = "#8cc8ff"
+borderColor = "#24426e"
+dataframeBorderColor = "#1d3760"
+dataframeHeaderBackgroundColor = "#13264a"
+
+[theme.dark.sidebar]
+backgroundColor = "#0f2140"
+secondaryBackgroundColor = "#16305a"
+textColor = "#e4efff"
+primaryColor = "#6cb8ff"
+borderColor = "#24426e"

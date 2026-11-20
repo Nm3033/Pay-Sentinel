@@ -52,10 +52,11 @@ BRAND = "Pay Sentinel"
 TAGLINE = "Scam defense for the PocketPay campus wallet"
 st.set_page_config(page_title=BRAND, page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 
-# The site is light-only (.streamlit/config.toml has one theme). Don't branch on st.context.theme: on a dark-mode
-# device it reports "dark" on the first run, before the light theme arrives, which would mix dark styling in.
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
-SURFACE = "#ffffff"   # page background (= theme backgroundColor): the gaps between stacked bars
+# Light and dark themes (.streamlit/config.toml); the ⋮ menu switches them. The CSS below follows the switch by
+# itself (light-dark()); DARK only picks the server-drawn chart colours and is refreshed on the next re-run.
+DARK = st.context.theme.type == "dark"
+SERIES = ["#3987e5", "#d95926", "#199e70"] if DARK else ["#2a78d6", "#eb6834", "#1baf7a"]   # validated per mode
+SURFACE = "#0b1830" if DARK else "#ffffff"   # page background (= theme backgroundColor): gaps between stacked bars
 # Plain-language names for the three decisions (the code's names stay CLEAR / HOLD_FOR_CONFIRMATION / ESCALATE)
 DECISION_INFO = {
     "CLEAR": ("✅", "Sent automatically",
@@ -82,103 +83,117 @@ HUMAN_DONE = ("SENT", "CANCELLED", "EXPIRED", "RELEASED", "CONFIRMED_CANCELLABLE
 TAGS = {"[CODE]": ("tag-code", "CODE"), "[LLM ]": ("tag-llm", "AI"), "[HUMAN]": ("tag-human", "HUMAN")}
 
 # ---- styling ---------------------------------------------------------------------------------------
-# White pages with light-blue elements scattered around: bubbles + dot patterns, bubbly banners, light-blue buttons
-# with a "pressable" edge, light-blue cards. Theme colours live in .streamlit/config.toml; this styles the rest.
+# White (or night-blue) pages with light-blue elements scattered around: bubbles + dot patterns, bubbly banners,
+# light-blue buttons with a "pressable" edge, light-blue cards. Every colour is light-dark(light, dark): the browser
+# picks one from the color-scheme Streamlit sets on .stApp, so the ⋮ menu's Light/Dark switch restyles these
+# instantly (switching theme doesn't re-run the script). Theme colours live in .streamlit/config.toml.
 st.markdown("""
 <style>
-:root {--ps-ink: #10284a; --ps-ink-soft: #2f4b70; --ps-blue: #1976d2; --ps-blue-ink: #0d47a1;
-  --ps-sky: #bfe3ff; --ps-sky-2: #a8d8ff; --ps-sky-edge: #8ccaf7; --ps-ice: #eef7ff; --ps-line: #cfe6fb;
-  --ps-card: #ffffff; --ps-shadow: 0 6px 18px rgba(25,118,210,.08);}
-/* scattered light-blue bubbles and dots on a white page (they stay put while the page scrolls) */
-.stApp {background:
-  radial-gradient(circle at 6% 22%, rgba(125,196,255,.22) 0 64px, transparent 65px),
-  radial-gradient(circle at 97% 9%, rgba(125,196,255,.20) 0 120px, transparent 121px),
-  radial-gradient(circle at 93% 82%, rgba(125,196,255,.16) 0 160px, transparent 161px),
-  radial-gradient(circle at 24% 97%, rgba(125,196,255,.16) 0 96px, transparent 97px),
-  radial-gradient(circle at 99% 46%, rgba(168,216,255,.30) 0 34px, transparent 35px),
-  radial-gradient(circle at 3% 70%, rgba(168,216,255,.32) 0 22px, transparent 23px),
-  #ffffff; background-attachment: fixed;}
-header[data-testid="stHeader"] {background: rgba(255,255,255,.72); backdrop-filter: blur(6px);}
-[data-testid="stSidebar"] {background:
-  radial-gradient(circle at 88% 5%, rgba(255,255,255,.75) 0 54px, transparent 55px),
-  radial-gradient(circle at 8% 97%, rgba(125,196,255,.35) 0 90px, transparent 91px),
-  radial-gradient(rgba(25,118,210,.11) 1.2px, transparent 1.7px) 0 0 / 18px 18px,
-  #e8f4ff;}
-[data-testid="stSidebarContent"], [data-testid="stSidebarHeader"] {background: transparent;}
+:root {--ps-ink: light-dark(#10284a, #e4efff); --ps-ink-soft: light-dark(#2f4b70, #b9d3f0);
+  --ps-blue-ink: light-dark(#0d47a1, #9fd0ff); --ps-sky: light-dark(#bfe3ff, #7cc4ff); --ps-sky-2: #a8d8ff;
+  --ps-sky-edge: light-dark(#8ccaf7, #3f8fdc); --ps-line: light-dark(#cfe6fb, #24426e);
+  --ps-card: light-dark(#ffffff, #10223f); --ps-tint: light-dark(#e8f4ff, #13264a);
+  --ps-bubble: light-dark(rgba(125,196,255,.20), rgba(108,184,255,.09));
+  --ps-bubble-2: light-dark(rgba(168,216,255,.32), rgba(140,200,255,.15));
+  --ps-shadow: 0 6px 18px light-dark(rgba(25,118,210,.08), rgba(0,0,0,.28));}
+/* scattered bubbles on top of the theme's own background colour (they stay put while the page scrolls) */
+.stApp {background-image:
+  radial-gradient(circle at 6% 22%, var(--ps-bubble) 0 64px, transparent 65px),
+  radial-gradient(circle at 97% 9%, var(--ps-bubble) 0 120px, transparent 121px),
+  radial-gradient(circle at 93% 82%, var(--ps-bubble) 0 160px, transparent 161px),
+  radial-gradient(circle at 24% 97%, var(--ps-bubble) 0 96px, transparent 97px),
+  radial-gradient(circle at 99% 46%, var(--ps-bubble-2) 0 34px, transparent 35px),
+  radial-gradient(circle at 3% 70%, var(--ps-bubble-2) 0 22px, transparent 23px);
+  background-attachment: fixed;}
+header[data-testid="stHeader"] {background: light-dark(rgba(255,255,255,.72), rgba(11,24,48,.72)); backdrop-filter: blur(6px);}
+[data-testid="stSidebar"] {background-image:
+  radial-gradient(circle at 88% 5%, light-dark(rgba(255,255,255,.75), rgba(255,255,255,.05)) 0 54px, transparent 55px),
+  radial-gradient(circle at 8% 97%, light-dark(rgba(125,196,255,.35), rgba(108,184,255,.14)) 0 90px, transparent 91px),
+  radial-gradient(light-dark(rgba(25,118,210,.11), rgba(140,200,255,.10)) 1.2px, transparent 1.7px);
+  background-size: auto, auto, 18px 18px;}
 .block-container {padding-bottom: 3rem; max-width: 1400px;}
-/* buttons: light blue with navy text (7.6-8.6:1) and a pressable bottom edge */
-[data-testid^="stBaseButton-primary"]:not(:disabled) {background: var(--ps-sky) !important; color: #0b3a6a !important;
-  border: 1px solid var(--ps-sky-edge) !important; box-shadow: 0 3px 0 var(--ps-sky-edge); font-weight: 600;
-  transition: transform .08s, box-shadow .08s, background .15s;}
+/* buttons: light blue with navy text (>= 7.6:1 in both modes) and a pressable bottom edge */
+[data-testid^="stBaseButton-primary"]:not(:disabled) {background: var(--ps-sky) !important;
+  color: light-dark(#0b3a6a, #062447) !important; border: 1px solid var(--ps-sky-edge) !important;
+  box-shadow: 0 3px 0 var(--ps-sky-edge); font-weight: 600; transition: transform .08s, box-shadow .08s, background .15s;}
 [data-testid^="stBaseButton-primary"]:not(:disabled):hover {background: var(--ps-sky-2) !important;
-  border-color: #6bb8f2 !important;}
+  border-color: light-dark(#6bb8f2, #6cb8ff) !important;}
 [data-testid^="stBaseButton-primary"]:not(:disabled):active {transform: translateY(2px); box-shadow: 0 1px 0 var(--ps-sky-edge);}
-[data-testid^="stBaseButton-secondary"]:not(:disabled) {background: var(--ps-ice) !important; color: #0d3c70 !important;
-  border: 1px solid var(--ps-line) !important; box-shadow: 0 2px 0 var(--ps-line); transition: transform .08s, background .15s;}
-[data-testid^="stBaseButton-secondary"]:not(:disabled):hover {background: #dff0ff !important; border-color: var(--ps-sky-edge) !important;}
+[data-testid^="stBaseButton-secondary"]:not(:disabled) {background: light-dark(#eef7ff, #16305a) !important;
+  color: light-dark(#0d3c70, #d6e9ff) !important; border: 1px solid light-dark(#cfe6fb, #2c5288) !important;
+  box-shadow: 0 2px 0 var(--ps-line); transition: transform .08s, background .15s;}
+[data-testid^="stBaseButton-secondary"]:not(:disabled):hover {background: light-dark(#dff0ff, #1d3a6b) !important;
+  border-color: light-dark(#8ccaf7, #3f8fdc) !important;}
 [data-testid^="stBaseButton-secondary"]:not(:disabled):active {transform: translateY(1px); box-shadow: none;}
 [data-testid^="stBaseButton-"] p {color: inherit !important;}
-/* page banner: light-blue gradient with bubbles */
-.ps-hero {position: relative; overflow: hidden; color: var(--ps-ink); border: 1px solid #bfe0fb; border-radius: 22px;
-  background: radial-gradient(rgba(25,118,210,.14) 1.3px, transparent 1.8px) 0 0 / 16px 16px,
-              linear-gradient(120deg, #e3f2ff 0%, #cfe8ff 55%, #e9f6ff 100%);
-  padding: 18px 26px; margin-bottom: 18px; box-shadow: 0 10px 28px rgba(25,118,210,.12);}
+/* page banner: light-blue gradient with bubbles and dots */
+.ps-hero {position: relative; overflow: hidden; color: var(--ps-ink); border: 1px solid light-dark(#bfe0fb, #2a5186);
+  border-radius: 22px; padding: 18px 26px; margin-bottom: 18px;
+  background: radial-gradient(light-dark(rgba(25,118,210,.14), rgba(140,200,255,.16)) 1.3px, transparent 1.8px) 0 0 / 16px 16px,
+              linear-gradient(120deg, light-dark(#e3f2ff, #13305c) 0%, light-dark(#cfe8ff, #17406f) 55%,
+                              light-dark(#e9f6ff, #112a50) 100%);
+  box-shadow: 0 10px 28px light-dark(rgba(25,118,210,.12), rgba(0,0,0,.3));}
 .ps-hero::before {content: ""; position: absolute; width: 230px; height: 230px; right: -60px; top: -100px;
-  border-radius: 50%; background: rgba(255,255,255,.7);}
+  border-radius: 50%; background: light-dark(rgba(255,255,255,.7), rgba(255,255,255,.06));}
 .ps-hero::after {content: ""; position: absolute; width: 120px; height: 120px; right: 190px; bottom: -78px;
-  border-radius: 50%; background: rgba(125,196,255,.40); box-shadow: 150px -95px 0 -38px rgba(125,196,255,.45);}
+  border-radius: 50%; background: light-dark(rgba(125,196,255,.40), rgba(108,184,255,.22));
+  box-shadow: 150px -95px 0 -38px light-dark(rgba(125,196,255,.45), rgba(108,184,255,.28));}
 .ps-hero > * {position: relative; z-index: 1;}
 .ps-hero .ps-kicker {font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700;
   color: var(--ps-blue-ink);}
-.ps-hero h1 {color: var(--ps-ink); font-size: 1.55rem; font-weight: 700; margin: 2px 0 2px 0; padding: 0;
+.ps-hero h1 {color: light-dark(#10284a, #f0f6ff); font-size: 1.55rem; font-weight: 700; margin: 2px 0 2px 0; padding: 0;
   letter-spacing: -.01em;}
 .ps-hero p {margin: 0; color: var(--ps-ink-soft); font-size: .92rem;}
 .ps-chips {margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;}
-.ps-chip {background: #ffffff; border: 1px solid #bfe0fb; color: var(--ps-blue-ink);
-  border-radius: 999px; padding: 3px 12px; font-size: .76rem; font-weight: 600;}
+.ps-chip {background: light-dark(#ffffff, #1f3d68); border: 1px solid light-dark(#bfe0fb, #2f5a90);
+  color: light-dark(#0d47a1, #cfe6ff); border-radius: 999px; padding: 3px 12px; font-size: .76rem; font-weight: 600;}
 .pill {display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 12px;
   font-size: .82rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap;}
-.pill-clear {background: #e3f6ec; color: #0b7a4b; border-color: #b9e6cf;}
-.pill-review {background: #fff3d6; color: #8a5a00; border-color: #f5d98f;}
-.pill-gate {background: #ffe8ec; color: #b4233c; border-color: #f6bfca;}
+.pill-clear {background: light-dark(#e3f6ec, #123a35); color: light-dark(#0b7a4b, #7ee2a8); border-color: light-dark(#b9e6cf, #1f6b4f);}
+.pill-review {background: light-dark(#fff3d6, #2e3330); color: light-dark(#8a5a00, #fcd36a); border-color: light-dark(#f5d98f, #6b5a26);}
+.pill-gate {background: light-dark(#ffe8ec, #33223a); color: light-dark(#b4233c, #ff9aa8); border-color: light-dark(#f6bfca, #7a3448);}
 .ps-label {font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; opacity: .65; margin-bottom: 2px;}
 .ps-value {font-size: 1rem; font-weight: 600;}
-.trace {border-left: 2px dashed var(--ps-sky-edge); margin-left: 6px; padding-left: 14px;}
+.trace {border-left: 2px dashed light-dark(#8ccaf7, #3d6ea8); margin-left: 6px; padding-left: 14px;}
 .trace-row {position: relative; padding: 5px 0; font-size: .86rem; line-height: 1.35;}
-.trace-row::before {content: ""; position: absolute; left: -21px; top: 10px; width: 12px; height: 12px;
-  border-radius: 50%; background: var(--ps-sky); border: 2px solid #ffffff; box-shadow: 0 0 0 1px var(--ps-sky-edge);}
+.trace-row::before {content: ""; position: absolute; left: -21px; top: 10px; width: 12px; height: 12px; border-radius: 50%;
+  background: light-dark(#bfe3ff, #6cb8ff); border: 2px solid light-dark(#ffffff, #0b1830);
+  box-shadow: 0 0 0 1px var(--ps-sky-edge);}
 .tag {display: inline-block; min-width: 54px; text-align: center; font-size: .68rem; font-weight: 700;
   letter-spacing: .05em; border-radius: 6px; padding: 2px 6px; margin-right: 8px;}
-.tag-code {background: #dff0ff; color: #0d5cab;}
-.tag-llm {background: #eee6ff; color: #6a3fd0;}
-.tag-human {background: #ffe8dc; color: #b2491a;}
+.tag-code {background: light-dark(#dff0ff, #173455); color: light-dark(#0d5cab, #9fd0ff);}
+.tag-llm {background: light-dark(#eee6ff, #232a5c); color: light-dark(#6a3fd0, #c7b2ff);}
+.tag-human {background: light-dark(#ffe8dc, #33283a); color: light-dark(#b2491a, #ffb08a);}
 .ps-side-brand {font-weight: 700; font-size: 1.15rem; margin: 0;}
 .ps-side-sub {opacity: .7; font-size: .8rem; margin: 0 0 6px 0;}
 .ps-user {border-radius: 14px; padding: 10px 12px; background: var(--ps-card); border: 1px solid var(--ps-line);
   box-shadow: var(--ps-shadow); font-size: .85rem; line-height: 1.4;}
 .ps-user b {font-size: .95rem;}
-.ps-help {border: 1px solid var(--ps-line); border-left: 5px solid #5aaef5; background: #e8f4ff;
+.ps-help {border: 1px solid var(--ps-line); border-left: 5px solid #5aaef5; background: var(--ps-tint);
   border-radius: 14px; padding: 10px 14px; font-size: .9rem; line-height: 1.45; margin: 0 0 16px 0;}
 .ps-step {border-radius: 16px; padding: 14px 14px 12px 14px; border: 1px solid var(--ps-line);
-  border-top: 5px solid var(--ps-sky-2); background: var(--ps-card); box-shadow: var(--ps-shadow); height: 100%;
-  transition: transform .15s;}
+  border-top: 5px solid light-dark(#a8d8ff, #3f8fdc); background: var(--ps-card); box-shadow: var(--ps-shadow);
+  height: 100%; transition: transform .15s;}
 .ps-step:hover {transform: translateY(-3px);}
 .ps-step .n {display: inline-block; font-weight: 700; font-size: .72rem; color: var(--ps-blue-ink); letter-spacing: .08em;
-  background: #e3f2ff; border-radius: 999px; padding: 2px 10px;}
+  background: light-dark(#e3f2ff, #152f52); border-radius: 999px; padding: 2px 10px;}
 .ps-step .t {font-weight: 700; font-size: 1rem; margin: 6px 0 6px 0;}
 .ps-step .d {font-size: .84rem; opacity: .85; line-height: 1.4;}
 .ps-phone {max-width: 380px; margin: 0 auto; border-radius: 30px; padding: 18px 18px 10px 18px;
-  border: 8px solid #cfe8ff; background: linear-gradient(180deg, #eaf5ff, var(--ps-card) 55%);
-  box-shadow: 0 14px 36px rgba(25,118,210,.16);}
+  border: 8px solid light-dark(#cfe8ff, #1d3a66);
+  background: linear-gradient(180deg, light-dark(#eaf5ff, #13264a), light-dark(#ffffff, #0f1f3b) 55%);
+  box-shadow: 0 14px 36px light-dark(rgba(25,118,210,.16), rgba(0,0,0,.35));}
 .ps-phone .app {font-weight: 700; font-size: .95rem; margin-bottom: 6px;}
 .ps-phone .amt {font-size: 1.6rem; font-weight: 700; margin: 4px 0;}
 .ps-phone .msg {font-size: .9rem; line-height: 1.45; margin: 8px 0 4px 0;}
-.ps-warn {border-radius: 10px; padding: 8px 10px; background: #ffe8ec; color: #8f1d33; font-size: .82rem; margin: 6px 0;}
-[data-testid="stMetric"] {background: linear-gradient(180deg, #f0f8ff, #ffffff 70%); border-color: var(--ps-line) !important;
-  border-top: 5px solid var(--ps-sky-2) !important; box-shadow: var(--ps-shadow);}
-[data-testid="stExpander"] details {background: #f5fbff; border-color: var(--ps-line);}
-[class*="st-key-decision_"] {background: linear-gradient(180deg, #e3f2ff, #ffffff 75%); border-color: #bfe0fb;
+.ps-warn {border-radius: 10px; padding: 8px 10px; background: light-dark(#ffe8ec, #33223a); color: light-dark(#8f1d33, #ffb3bd);
+  font-size: .82rem; margin: 6px 0;}
+[data-testid="stMetric"] {background: linear-gradient(180deg, light-dark(#f0f8ff, #13264a), light-dark(#ffffff, #0f2140) 70%);
+  border-color: var(--ps-line) !important; border-top: 5px solid light-dark(#a8d8ff, #3f8fdc) !important;
   box-shadow: var(--ps-shadow);}
+[data-testid="stExpander"] details {background: light-dark(#f5fbff, #10223f); border-color: var(--ps-line);}
+[class*="st-key-decision_"] {background: linear-gradient(180deg, light-dark(#e3f2ff, #16305a), light-dark(#ffffff, #0f2140) 75%);
+  border-color: light-dark(#bfe0fb, #2a5186); box-shadow: var(--ps-shadow);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -282,11 +297,14 @@ def login_page() -> None:
       [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"],
       header[data-testid="stHeader"] {display: none !important;}
       .block-container {padding-top: 7vh; max-width: 1100px;}
-      [data-testid="stForm"] {background: #ffffff; border-color: #bfe0fb; border-radius: 22px;
-                              border-top: 6px solid #a8d8ff; box-shadow: 0 18px 50px rgba(25,118,210,.14);
+      [data-testid="stForm"] {background: light-dark(#ffffff, #10223f); border-color: light-dark(#bfe0fb, #2a5186);
+                              border-radius: 22px; border-top: 6px solid light-dark(#a8d8ff, #3f8fdc);
+                              box-shadow: 0 18px 50px light-dark(rgba(25,118,210,.14), rgba(0,0,0,.35));
                               padding: 26px 28px 18px 28px;}
-      [class*="st-key-feature_"] {background: linear-gradient(180deg, #e8f4ff, #ffffff 80%); border-color: #cfe6fb;
-                                  box-shadow: 0 6px 18px rgba(25,118,210,.08);}
+      [class*="st-key-feature_"] {background: linear-gradient(180deg, light-dark(#e8f4ff, #16305a),
+                                                          light-dark(#ffffff, #0f2140) 80%);
+                                  border-color: light-dark(#cfe6fb, #24426e);
+                                  box-shadow: 0 6px 18px light-dark(rgba(25,118,210,.08), rgba(0,0,0,.28));}
       .ps-login-logo {font-size: 2.6rem; line-height: 1; margin-bottom: 6px;}
       .ps-login-title {font-size: 2.3rem !important; font-weight: 700; letter-spacing: -.02em; line-height: 1.15;
                        margin: 4px 0 0 0;}
@@ -1088,7 +1106,7 @@ def page_campaigns() -> None:
                    + (f"Account {(c.last_ts.date() - r.created_on).days} days old, trust {r.trust_score}/100, "
                       f"{r.scam_reports} report(s)." if r else "Not a known account.")
                    + (f" Links: {', '.join(c.links)}" if c.links else ""))
-        st.graphviz_chart(campaign_dot([c], "light"), width="stretch")
+        st.graphviz_chart(campaign_dot([c], "dark" if DARK else "light"), width="stretch")
     with right, st.container(border=True):
         st.markdown("##### Each payment's outcome")
         pay = pd.DataFrame([dict(Payment=t, Student=s, Amount=a, Outcome=OUTCOME_LABEL[o])
@@ -1512,6 +1530,7 @@ with st.sidebar:
         ss.token = None
         ss.selected_alert = None
         st.rerun()
+    st.caption("🌗 Light or dark mode: ⋮ menu (top right) → Light / Dark / System")
     st.write("")
     if st.button("▶ Run 12 test scenarios", type="primary", width="stretch",
                  help="Snacks, the Front Row Fest scam, fake PocketPay messages, 3 unclear-slang cases, an attack "
