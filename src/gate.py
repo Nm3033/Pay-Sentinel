@@ -7,8 +7,14 @@ Every reason string cites the record ID it is based on, so it can go straight in
 from __future__ import annotations
 
 from src import config
-from src.schemas import (GateDecision, MessageAssessment, MessageSignals, RecipientCheck, Route, SanitizedMemo,
-                         SpreadStats, Transaction, TransactionContext)
+from src.schemas import (GateDecision, MessageAssessment, MessageSignals, PairWindow, RecipientCheck, Route,
+                         SanitizedMemo, SpreadStats, Transaction, TransactionContext)
+
+
+def needs_guardian(txn_type: str, amount_aed: float, age: int | None) -> bool:
+    """HS-1.5: students under GUARDIAN_AGE need a parent/guardian to approve peer transfers above the limit."""
+    return (age is not None and age >= 0 and age < config.GUARDIAN_AGE and txn_type == "P2P"
+            and amount_aed > config.GUARDIAN_LIMIT_AED)
 
 
 def is_established_peer(rc: RecipientCheck | None) -> bool:
@@ -21,12 +27,15 @@ def evaluate_escalation_gate(txn: Transaction, context: TransactionContext | Non
                              recipient: RecipientCheck | None, signals: MessageSignals | None,
                              memo: SanitizedMemo | None, chat: SanitizedMemo | None = None,
                              spread: SpreadStats | None = None, assessment: MessageAssessment | None = None,
-                             evidence_errors: list[str] | None = None) -> GateDecision:
+                             evidence_errors: list[str] | None = None,
+                             pair: PairWindow | None = None) -> GateDecision:
     """ESCALATE: reported recipient, phishing link + pressure, impersonation, exam leak, scam campaign,
                  hidden instructions, or an uncertain read (low AI confidence / unreadable slang).
     HOLD_FOR_CONFIRMATION: unknown/new/low-trust recipient, amount above the automatic limit, scam signals,
                  new device, many payments, or any check that couldn't run (fallback: pause, never block).
     CLEAR: none of the above (e.g. verified campus vendor, normal amount, clean message).
+    Curveballs: lookalike of a verified shop => ESCALATE; split payments (rolling total to one recipient above the
+    automatic limit) => HOLD; under-16 peer transfer above the guardian limit => HOLD + guardian approval.
     """
     tid = txn.record_id
     esc: list[str] = []
@@ -41,6 +50,9 @@ def evaluate_escalation_gate(txn: Transaction, context: TransactionContext | Non
     else:
         rec = recipient.recipient
         vendor = recipient.verified_vendor
+        if recipient.lookalike_of:
+            esc.append(f"LOOKALIKE_VENDOR: {recipient.handle} imitates the verified shop {recipient.lookalike_of} "
+                       f"({recipient.lookalike_score:.0%} similar) [{rec.record_id if rec else tid}]")
         if not recipient.found:
             hold.append(f"UNKNOWN_RECIPIENT: {recipient.handle} is not a PocketPay account on record [{tid}]")
         else:
@@ -58,6 +70,11 @@ def evaluate_escalation_gate(txn: Transaction, context: TransactionContext | Non
         if (spread is not None and spread.distinct_students >= config.CAMPAIGN_MIN_STUDENTS and not vendor
                 and not is_established_peer(recipient)):
             esc.append(f"SCAM_CAMPAIGN: reached {spread.distinct_students} students within a day [{spread.record_id}]")
+        # HS-1.1 split payments: small pieces that add up past the limit within the window
+        if pair is not None and pair.txn_count >= 2 and pair.total_aed > limit:
+            hold.append(f"SPLIT_PAYMENTS: {pair.txn_count} payments to {pair.recipient_handle} total "
+                        f"{pair.total_aed:,.2f} AED in {config.SPLIT_WINDOW_MINUTES} min (limit {limit:,.0f}) "
+                        f"[{pair.record_id}]")
 
     # ---- message & note (slang scanner + sanitizer) ------------------------------------------
     if "PHISHING_LINK" in sig and sig & {"URGENCY", "CLICK_BAIT", "IMPERSONATION"}:
@@ -100,15 +117,22 @@ def evaluate_escalation_gate(txn: Transaction, context: TransactionContext | Non
             age = (txn.ts.date() - dev.first_seen).days
             if not dev.trusted or age < config.NEW_DEVICE_DAYS:
                 hold.append(f"NEW_DEVICE: {age} days old{'' if dev.trusted else ', untrusted'} [{dev.record_id}]")
-        if context.velocity.txn_count > config.VELOCITY_MAX_24H:
+        if context.velocity.txn_count > config.VELOCITY_MAX_24H and not vendor:   # canteen runs aren't a risk
             hold.append(f"MANY_PAYMENTS: {context.velocity.txn_count} in 24h [{context.velocity.record_id}]")
+
+        # HS-1.5 guardian approval: age read from the dataset, rule decided here
+        age = context.student.age_on(txn.ts.date())
+        if needs_guardian(txn.txn_type, txn.amount_aed, age):
+            hold.append(f"GUARDIAN_REQUIRED: student is {age}; peer transfers above {config.GUARDIAN_LIMIT_AED:,.0f} "
+                        f"AED need a guardian's approval [{context.student.record_id}]")
+    guardian = any(r.startswith("GUARDIAN_REQUIRED") for r in hold)
 
     if esc:
         return GateDecision(route=Route.ESCALATE, reasons=esc + hold, requires_human=True, awaiting="STAFF",
-                            uncertain=uncertain)
+                            uncertain=uncertain, approvals=["STAFF"] + (["GUARDIAN"] if guardian else []))
     if hold:
         return GateDecision(route=Route.HOLD_FOR_CONFIRMATION, reasons=hold, requires_human=True,
-                            awaiting="STUDENT")
+                            awaiting="STUDENT", approvals=["STUDENT"] + (["GUARDIAN"] if guardian else []))
     who = (f"verified campus vendor [{recipient.recipient.record_id}]" if vendor
            else f"established classmate [{recipient.recipient.record_id}]")
     return GateDecision(route=Route.CLEAR, requires_human=False, awaiting="NONE", reasons=[
@@ -136,6 +160,9 @@ REASON_TEXT = {
     "UNKNOWN_DEVICE": "an unknown phone was used", "NEW_DEVICE": "a new phone was used",
     "MANY_PAYMENTS": "unusually many payments today", "VERIFICATION_UNAVAILABLE": "the recipient check timed out",
     "CHECK_UNAVAILABLE": "a check couldn't run",
+    "LOOKALIKE_VENDOR": "the name imitates a verified campus shop",
+    "SPLIT_PAYMENTS": "several small payments to the same person add up past the limit",
+    "GUARDIAN_REQUIRED": "a parent or guardian must approve this transfer",
 }
 
 

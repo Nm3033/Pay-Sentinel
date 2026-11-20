@@ -62,6 +62,12 @@ flagged payment ──► [CODE] sanitizer regex  ─┐ chat message + payment 
 - **Stretch:** ✅ "I know this seller / Cancel transfer" UI · ✅ scam alert broadcasting · ✅ staff-hours dashboard ·
   ⬜ ticket barcode/ownership verification (not built).
 
+- **Round 2 curveballs:** ✅ HS-1.1 split payments (`compute_pair_window`, `SPLIT_PAYMENTS` hold) · ✅ HS-1.2 lookalike
+  vendors (`src/lookalike.py`, `LOOKALIKE_VENDOR` escalate + CLEAR guard) · ✅ HS-1.3 AI-addressed text (`role_prefix`,
+  `clear_command`, `verification_claim` sanitizer rules) · ✅ HS-1.4 `CONFIRMED_CANCELLABLE` → `CANCELLED` (inside the window)
+  / `RELEASED` (after it), refused attempts logged as `REJECTED:` · ✅ HS-1.5 `PENDING_GUARDIAN` + `guardian:` actor,
+  age from `students.date_of_birth`. Tests: `tests/test_curveballs.py`.
+
 Results: code-only on all 250 payments, 0/50 scams auto-cleared, 15/15 uncertain escalated, 152/185 (82%) safe payments
 cleared instantly. Live AI (Groq gpt-oss-120b): 12/12 demo scenarios match.
 

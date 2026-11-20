@@ -28,10 +28,14 @@ Track: IEEE CS SYP TechX Dubai '26, Domain 1 High School: *PocketPay Autonomous 
 9. **No uncited claims.** Each AI `Finding` cites ≥1 record ID a tool actually returned; `verify_citations()` drops the
    rest and masks unknown IDs in free text.
 10. All LLM I/O models use Pydantic with `extra="forbid"`. LLM failure ⇒ code-only path, never a less careful route.
-11. Evaluation-only columns (`ground_truth`, `scenario`, `is_injection`, `injection_variant`, `messages.label`,
+11. **Round 2 rules stay in code:** split totals, lookalike checks and the guardian rule are computed in Python from
+   the DB; the cancel window is checked against the clock in `update_payment_state()`. Every refused state change is
+   written to `case_resolutions` with a `REJECTED:` note and the state left unchanged. Guardian actions must come from
+   `guardian:<the student's guardian_id>`.
+12. Evaluation-only columns (`ground_truth`, `scenario`, `is_injection`, `injection_variant`, `messages.label`,
     `demo_scenarios.expected_route`) are never put in prompts. Only `src/telemetry.py`, the workflow CLI scorecard and
     `tests/` may read them.
-12. Console data entry (`validate_new_transactions` → `add_transactions`) validates every row, inserts atomically, stores
+13. Console data entry (`validate_new_transactions` → `add_transactions`) validates every row, inserts atomically, stores
     text raw (screened at triage), tags rows `manual:<staff>`, and leaves ground truth NULL.
 
 ## Conventions

@@ -44,6 +44,10 @@ NEW_DEVICE_DAYS: int = 30             # student's device younger than this => ne
 VELOCITY_MAX_24H: int = 6             # student payments in 24h above this => unusual
 HOLD_EXPIRY_HOURS: int = 24           # unanswered confirmation expires -> transfer cancelled, money returned
 MAX_STUDENT_PROMPTS: int = 2          # one prompt + one reminder; the agent never asks again (no loops)
+SPLIT_WINDOW_MINUTES: int = 60        # rolling window for the split-payment check (same sender -> same recipient)
+CANCEL_WINDOW_SECONDS: int = 120      # after a student confirms a held payment they can still cancel for this long
+GUARDIAN_AGE: int = 16                # students younger than this need a guardian for big peer transfers
+GUARDIAN_LIMIT_AED: float = 100.0     # ... above this amount (school rule)
 MEMO_MAX_CHARS: int = 280             # sanitized text truncation length
 
 # ---- Dataset ---------------------------------------------------------------

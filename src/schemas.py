@@ -34,13 +34,17 @@ _ROUTE_ORDER = ["CLEAR", "HOLD_FOR_CONFIRMATION", "ESCALATE"]
 class PaymentState(str, Enum):
     CLEARED = "CLEARED"                          # sent automatically (terminal)
     PENDING_CONFIRMATION = "PENDING_CONFIRMATION"  # waiting for the student's reply
+    PENDING_GUARDIAN = "PENDING_GUARDIAN"        # under-16 peer transfer: waiting for a parent/guardian
+    CONFIRMED_CANCELLABLE = "CONFIRMED_CANCELLABLE"  # confirmed; the student may still cancel inside the window
     ESCALATED = "ESCALATED"                      # waiting for support staff
-    SENT = "SENT"                                # sent after a human confirmed (terminal)
+    SENT = "SENT"                                # sent after support staff released it (terminal)
+    RELEASED = "RELEASED"                        # sent after the cancel window closed (terminal)
     CANCELLED = "CANCELLED"                      # transfer cancelled, money stays with the student (terminal)
     EXPIRED = "EXPIRED"                          # nobody answered in time: cancelled, money returned (terminal)
 
 
-TERMINAL_STATES = {PaymentState.CLEARED, PaymentState.SENT, PaymentState.CANCELLED, PaymentState.EXPIRED}
+TERMINAL_STATES = {PaymentState.CLEARED, PaymentState.SENT, PaymentState.RELEASED, PaymentState.CANCELLED,
+                   PaymentState.EXPIRED}
 
 
 class Action(str, Enum):
@@ -49,13 +53,17 @@ class Action(str, Enum):
     HOLD_FOR_CONFIRMATION = "HOLD_FOR_CONFIRMATION"
     ESCALATE = "ESCALATE"
     REMIND = "REMIND"                        # one reminder to the student (capped)
-    STUDENT_CONFIRM = "STUDENT_CONFIRM"      # "I know this seller" -> send
+    STUDENT_CONFIRM = "STUDENT_CONFIRM"      # "I know this seller" -> cancel window (or guardian, if needed)
     STUDENT_CANCEL = "STUDENT_CANCEL"        # "Cancel transfer"
     STUDENT_REPORT = "STUDENT_REPORT"        # "This is a scam" -> staff
     STAFF_RELEASE = "STAFF_RELEASE"          # staff checked it: send
     STAFF_CANCEL = "STAFF_CANCEL"            # staff: cancel this transfer (wallet stays usable)
     STAFF_ASK_STUDENT = "STAFF_ASK_STUDENT"  # staff hands it back to the student to confirm
     EXPIRE = "EXPIRE"                        # no reply before the deadline
+    RELEASE = "RELEASE"                      # cancel window closed -> money sent
+    GUARDIAN_APPROVE = "GUARDIAN_APPROVE"    # parent/guardian approves an under-16 transfer
+    GUARDIAN_DECLINE = "GUARDIAN_DECLINE"    # parent/guardian declines it
+    INVALID_REQUEST = "INVALID_REQUEST"      # LOG ONLY: an attempted action that is not allowed (never changes state)
 
 
 # ---- Source records (each carries a citable record_id) ------------------------
@@ -87,6 +95,16 @@ class StudentProfile(Strict):
     grade: str
     joined_on: date
     usual_daily_spend_aed: float
+    date_of_birth: date
+    guardian_id: str
+    guardian_name: str
+
+    def age_on(self, day: date) -> int:
+        return age_on(self.date_of_birth, day)
+
+
+def age_on(dob: date, day: date) -> int:
+    return day.year - dob.year - ((day.month, day.day) < (dob.month, dob.day))
 
 
 class Device(Strict):
@@ -165,6 +183,8 @@ class RecipientCheck(Strict):
     recipient: Recipient | None
     account_age_days: int | None
     verified_vendor: bool
+    lookalike_of: str | None = None       # verified shop handle this one imitates (close but not exact)
+    lookalike_score: float | None = None
 
     def record_ids(self) -> set[str]:
         return {self.recipient.record_id} if self.recipient else set()
@@ -180,6 +200,18 @@ class SpreadStats(Strict):
     student_ids: list[str]
     txn_ids: list[str]
     message_ids: list[str]
+
+
+class PairWindow(Strict):
+    """Rolling total of one student's transfers to one recipient (split-payment check)."""
+    record_id: str = Field(pattern=r"^PAIR-")
+    student_id: str
+    recipient_handle: str
+    window_start: datetime
+    window_end: datetime
+    txn_count: int
+    total_aed: float
+    txn_ids: list[str]
 
 
 # ---- Guard / agent / gate outputs ---------------------------------------------
@@ -220,6 +252,7 @@ class GateDecision(Strict):
     requires_human: bool             # True for HOLD and ESCALATE
     awaiting: Literal["NONE", "STUDENT", "STAFF"] = "NONE"
     uncertain: bool = False          # low-confidence read: escalated instead of guessing
+    approvals: list[str] = []        # who must approve before money moves, decided by code (e.g. STUDENT, GUARDIAN)
 
 
 class Finding(Strict):
@@ -248,7 +281,7 @@ class PaymentStateRecord(Strict):
     """Stateful memory for one payment (table payment_states). Waiting is a stored state, never a loop."""
     txn_id: str
     state: PaymentState
-    awaiting: Literal["NONE", "STUDENT", "STAFF"]
+    awaiting: Literal["NONE", "STUDENT", "STAFF", "GUARDIAN"]
     prompts_sent: int
     created_at: datetime
     updated_at: datetime
@@ -265,7 +298,7 @@ class ResolutionRecord(Strict):
     txn_id: str
     action: Action
     from_state: PaymentState | None
-    to_state: PaymentState
+    to_state: PaymentState | None    # == from_state when the attempt was rejected
     actor: str
     note: str
     reasons: list[str]
@@ -283,6 +316,7 @@ class CaseFile(Strict):
     context: TransactionContext | None = None
     recipient: RecipientCheck | None = None
     spread: SpreadStats | None = None
+    pair: PairWindow | None = None
     gate: GateDecision | None = None
     investigation: InvestigatorOutput | None = None
     dropped_findings: list[Finding] = []
@@ -303,7 +337,7 @@ class NewTransaction(Strict):
     amount_aed: float = Field(gt=0, le=5_000)
     txn_type: Literal["PURCHASE", "P2P"] = "P2P"
     channel: Literal["APP", "QR", "LINK"] = "APP"
-    recipient_handle: str = Field(pattern=r"^@[a-z0-9_.]{3,30}$")
+    recipient_handle: str = Field(pattern=r"^@[a-z0-9_.\-]{3,30}$")
     recipient_name: str = Field(default="", max_length=80)
     message: str = Field(default="", max_length=500)   # the chat message the student received
     memo: str = Field(default="", max_length=200)      # payment note

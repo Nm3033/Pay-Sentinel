@@ -43,7 +43,7 @@ def test_student_confirms_textbook(conn):
     c = run(conn, _demo(conn)[5])
     assert c.state == PaymentState.PENDING_CONFIRMATION
     done = workflow.student_respond(c.case_id, "STUDENT_CONFIRM", c.transaction.student_id, conn=conn)
-    assert done.state == PaymentState.SENT and done.trace[-1].startswith("[HUMAN]")
+    assert done.state == PaymentState.CONFIRMED_CANCELLABLE and done.trace[-1].startswith("[HUMAN]")
     with pytest.raises(services.ApprovalRequired):   # someone else's reply is refused
         workflow.student_respond(run(conn, _demo(conn)[12]).case_id, "STUDENT_CONFIRM", "STU-0999", conn=conn)
 

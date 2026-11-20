@@ -47,8 +47,13 @@ _RULES: list[tuple[str, re.Pattern]] = [(n, re.compile(p, re.I)) for n, p in [
     ("release_funds", r"\b(release|approve|authori[sz]e)\b\W+(?:\w+\W+){0,3}?(funds?|transaction|transfer|payment)\b"),
     ("escalation_suppression", r"\bpre-?approved\b|\bno need to (escalate|review|check)\b|"
                                r"\b(do not|don'?t) (escalate|flag|review|report)\b"),
-    ("ai_addressing", r"\b(note|message|instructions?)\s+(to|for)\s+(the\s+)?(ai|llm|model|assistant|bot|"
-                      r"agent|reviewer|system|analyst)\b|\byou are (now )?(an? |the )?(ai|assistant|admin)\b"),
+    ("ai_addressing", r"\b(note|message|instructions?)\s+(to|for)\s+(the\s+)?(\w+\s+){0,2}(ai|llm|model|assistant|"
+                      r"bot|agent|reviewer|system|analyst)\b|\byou are (now )?(an? |the )?(ai|assistant|admin)\b"),
+    ("role_prefix", r"(?:^|[\n.!?;:]\s*|\s)(system|assistant|admin|developer|ai)\s*:\s"),
+    ("clear_command", r"\b(clear|release|approve|unblock|unfreeze|allow)\s+(it|this|that|the\s+(payment|transfer|"
+                      r"transaction|funds))\s+(now|immediately|right\s+away|asap)\b"),
+    ("verification_claim", r"\b(seller|account|payment|transaction|transfer|user|recipient)\s+(is|has\s+been)\s+"
+                           r"(already\s+)?(verified|pre-?approved|whitelisted|trusted|safe)\b"),
     ("json_directive", r"\{[^{}]*\"(route|risk|approved|decision|verdict|status|label)\"\s*:"),
     ("arabic_ignore", r"(تجاهل|تجاوز|انس)[^.\n]{0,40}(التعليمات|القواعد|الأوامر|التحقق)"),
     ("arabic_approve", r"(وافق|اعتمد|حرر)[^.\n]{0,20}(التحويل|المعاملة|الدفعة|الأموال)"),

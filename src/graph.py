@@ -141,7 +141,8 @@ def case_outcome(case) -> str:
         return "UNTRIAGED"
     s = case.state.value if case.state else None
     return {"CLEARED": "CLEARED", "PENDING_CONFIRMATION": "AWAITING_STUDENT", "ESCALATED": "AWAITING_STAFF",
-            "SENT": "SENT", "CANCELLED": "CANCELLED", "EXPIRED": "EXPIRED"}.get(
+            "SENT": "SENT", "CANCELLED": "CANCELLED", "EXPIRED": "EXPIRED", "RELEASED": "SENT",
+            "CONFIRMED_CANCELLABLE": "SENT", "PENDING_GUARDIAN": "AWAITING_STUDENT"}.get(
         s, {"CLEAR": "CLEARED", "HOLD_FOR_CONFIRMATION": "AWAITING_STUDENT", "ESCALATE": "AWAITING_STAFF"}.get(
             case.final_route.value if case.final_route else "", "UNTRIAGED"))
 

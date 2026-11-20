@@ -28,6 +28,9 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [(n, re.compile(p, re.I)) for n, p in 
                  r"pay first|deposit (now|first)|or (i|we) (sell|give) it)\b"),
     ("EXAM_LEAK", r"\b((exam|final|test|quiz|midterm)s? (paper|answers?|questions?)|answers? (are |got )?leaked|"
                   r"leaked (paper|answers?|exam|questions?))\b"),
+    ("SPLIT_REQUEST", r"\b(send|pay|transfer)\s+(me\s+)?(\d+|half|part)\b[^.\n]{0,25}\b(now|first)\b[^.\n]{0,40}"
+                      r"\b(\d+|rest|other\s+half|remaining)\b[^.\n]{0,20}\b(after|later|tomorrow|next|tonight)\b|"
+                      r"\b(in|into)\s+(small\s+)?(pieces|parts|chunks|bits|instal+ments)\b|\bsafer\s+for\s+both\b"),
 ]]
 _LINK = re.compile(r"(https?://[^\s]+|www\.[^\s]+|\b[a-z0-9-]+\.(?:co|com|net|xyz|io|me|link|site|app|"
                    r"school|ly)(?:/[^\s]*)?)", re.I)
@@ -58,4 +61,5 @@ SIGNAL_TEXT = {
     "URGENCY": "pressure to pay fast", "CLICK_BAIT": "a “click here / claim” link", "PHISHING_LINK": "an unofficial link",
     "IMPERSONATION": "pretends to be PocketPay or the school", "TOO_GOOD": "a deal that's too good to be true",
     "PRESSURE": "pushes you to pay first or keep it secret", "EXAM_LEAK": "offers leaked exam answers",
+    "SPLIT_REQUEST": "asks you to send the money in small pieces",
 }

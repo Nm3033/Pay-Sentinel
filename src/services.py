@@ -25,8 +25,10 @@ from typing import Iterator
 from pydantic import ValidationError
 
 from src import config
+from src.gate import needs_guardian
+from src.lookalike import find_lookalike
 from src.schemas import (
-    Action, Alert, CaseFile, ChatMessage, Device, DeviceLogin, NewTransaction, PaymentState,
+    Action, Alert, CaseFile, ChatMessage, Device, DeviceLogin, NewTransaction, PairWindow, PaymentState, age_on,
     PaymentStateRecord, Recipient, RecipientCheck, ResolutionRecord, SpreadStats, StaffApproval,
     StudentProfile, TERMINAL_STATES, Transaction, TransactionContext, VelocityStats,
 )
@@ -213,15 +215,20 @@ def verify_campus_recipient(handle: str, *, as_of: date | None = None, simulate_
         row = c.execute("SELECT * FROM recipients WHERE handle = ?", (handle.lower(),)).fetchone()
     if simulate_outage or (row is not None and row["api_status"] == "TIMEOUT"):
         raise VerificationTimeout("campus recipient directory did not respond within 3s")
+    with _use(conn) as c:
+        vendors = [r[0] for r in c.execute("SELECT handle FROM recipients WHERE kind = 'VENDOR' AND verified = 1")]
+    look = find_lookalike(handle, vendors)           # HS-1.2: close-but-not-exact copy of a verified shop?
+    lookalike = dict(lookalike_of=look[0], lookalike_score=look[1]) if look else {}
     if row is None:
-        return RecipientCheck(handle=handle, found=False, recipient=None, account_age_days=None, verified_vendor=False)
+        return RecipientCheck(handle=handle, found=False, recipient=None, account_age_days=None, verified_vendor=False,
+                              **lookalike)
     d = dict(row)
     d["record_id"] = d.pop("recipient_id")
     d.pop("api_status")
     rec = Recipient(**d)
     age = ((as_of or date.today()) - rec.created_on).days
     return RecipientCheck(handle=rec.handle, found=True, recipient=rec, account_age_days=age,
-                          verified_vendor=rec.kind == "VENDOR" and rec.verified)
+                          verified_vendor=rec.kind == "VENDOR" and rec.verified, **lookalike)
 
 
 def compute_recipient_spread(handle: str, around: datetime, *, window_hours: int = 24,
@@ -241,6 +248,26 @@ def compute_recipient_spread(handle: str, around: datetime, *, window_hours: int
                        txn_ids=[r["txn_id"] for r in txns], message_ids=[r["message_id"] for r in msgs])
 
 
+def compute_pair_window(student_id: str, handle: str, as_of: datetime, *, upto_txn: str | None = None,
+                        minutes: int = config.SPLIT_WINDOW_MINUTES,
+                        conn: sqlite3.Connection | None = None) -> PairWindow:
+    """HS-1.1 split payments: this student's transfers to this recipient in the last `minutes` (incl. this one).
+    Transfers that were cancelled or expired don't count: that money never moved."""
+    start = as_of - timedelta(minutes=minutes)
+    with _use(conn) as c:
+        rows = c.execute(
+            "SELECT t.txn_id, t.amount_aed FROM transactions t LEFT JOIN payment_states p ON p.txn_id = t.txn_id "
+            "WHERE t.student_id = ? AND t.recipient_handle = ? AND t.ts >= ? "
+            "AND (t.ts < ? OR (t.ts = ? AND t.txn_id <= ?)) "     # same second: earlier IDs first
+            "AND (p.state IS NULL OR p.state NOT IN ('CANCELLED', 'EXPIRED')) ORDER BY t.ts, t.txn_id",
+            (student_id, handle, start.isoformat(timespec="seconds"), as_of.isoformat(timespec="seconds"),
+             as_of.isoformat(timespec="seconds"), upto_txn or "TXN-99999")).fetchall()
+    return PairWindow(record_id=f"PAIR-{student_id}-{re.sub(r'[^a-z0-9]', '', handle.lower())[:12]}-{as_of:%H%M%S}",
+                      student_id=student_id, recipient_handle=handle, window_start=start, window_end=as_of,
+                      txn_count=len(rows), total_aed=round(sum(r["amount_aed"] for r in rows), 2),
+                      txn_ids=[r["txn_id"] for r in rows])
+
+
 # ---- Tool 3: payment state (stateful memory + action boundaries) ------------------------------
 _P = PaymentState
 TRANSITIONS: dict[tuple[PaymentState | None, Action], PaymentState] = {
@@ -248,20 +275,28 @@ TRANSITIONS: dict[tuple[PaymentState | None, Action], PaymentState] = {
     (None, Action.HOLD_FOR_CONFIRMATION): _P.PENDING_CONFIRMATION,
     (None, Action.ESCALATE): _P.ESCALATED,
     (_P.PENDING_CONFIRMATION, Action.REMIND): _P.PENDING_CONFIRMATION,
-    (_P.PENDING_CONFIRMATION, Action.STUDENT_CONFIRM): _P.SENT,
+    (_P.PENDING_CONFIRMATION, Action.STUDENT_CONFIRM): _P.CONFIRMED_CANCELLABLE,   # or PENDING_GUARDIAN (code decides)
     (_P.PENDING_CONFIRMATION, Action.STUDENT_CANCEL): _P.CANCELLED,
     (_P.PENDING_CONFIRMATION, Action.STUDENT_REPORT): _P.ESCALATED,
     (_P.PENDING_CONFIRMATION, Action.ESCALATE): _P.ESCALATED,
     (_P.PENDING_CONFIRMATION, Action.EXPIRE): _P.EXPIRED,
-    (_P.ESCALATED, Action.STAFF_RELEASE): _P.SENT,
+    (_P.PENDING_GUARDIAN, Action.GUARDIAN_APPROVE): _P.CONFIRMED_CANCELLABLE,
+    (_P.PENDING_GUARDIAN, Action.GUARDIAN_DECLINE): _P.CANCELLED,
+    (_P.PENDING_GUARDIAN, Action.STUDENT_CANCEL): _P.CANCELLED,
+    (_P.PENDING_GUARDIAN, Action.STAFF_CANCEL): _P.CANCELLED,
+    (_P.PENDING_GUARDIAN, Action.EXPIRE): _P.EXPIRED,
+    (_P.CONFIRMED_CANCELLABLE, Action.STUDENT_CANCEL): _P.CANCELLED,   # only inside the cancel window
+    (_P.CONFIRMED_CANCELLABLE, Action.RELEASE): _P.RELEASED,           # only after the cancel window
+    (_P.ESCALATED, Action.STAFF_RELEASE): _P.SENT,                      # or PENDING_GUARDIAN (code decides)
     (_P.ESCALATED, Action.STAFF_CANCEL): _P.CANCELLED,
     (_P.ESCALATED, Action.STAFF_ASK_STUDENT): _P.PENDING_CONFIRMATION,
     (_P.ESCALATED, Action.STUDENT_CANCEL): _P.CANCELLED,   # a student can always cancel their own transfer
 }
-_SYSTEM = {Action.CLEAR, Action.HOLD_FOR_CONFIRMATION, Action.ESCALATE, Action.REMIND, Action.EXPIRE}
+_SYSTEM = {Action.CLEAR, Action.HOLD_FOR_CONFIRMATION, Action.ESCALATE, Action.REMIND, Action.EXPIRE, Action.RELEASE}
 _STUDENT = {Action.STUDENT_CONFIRM, Action.STUDENT_CANCEL, Action.STUDENT_REPORT}
+_GUARDIAN = {Action.GUARDIAN_APPROVE, Action.GUARDIAN_DECLINE}
 _STAFF = {Action.STAFF_RELEASE, Action.STAFF_CANCEL, Action.STAFF_ASK_STUDENT}
-_AWAITING = {_P.PENDING_CONFIRMATION: "STUDENT", _P.ESCALATED: "STAFF"}
+_AWAITING = {_P.PENDING_CONFIRMATION: "STUDENT", _P.ESCALATED: "STAFF", _P.PENDING_GUARDIAN: "GUARDIAN"}
 
 
 def _state_row(r: sqlite3.Row) -> PaymentStateRecord:
@@ -286,6 +321,15 @@ def list_payment_states(state: PaymentState | None = None, *,
         return [_state_row(r) for r in c.execute(sql + " ORDER BY txn_id", args)]
 
 
+def guardian_rule(t: Transaction, c: sqlite3.Connection) -> tuple[bool, str, int]:
+    """HS-1.5: (guardian approval needed?, guardian_id, student's age on the payment date). Read from the DB."""
+    s_ = c.execute("SELECT date_of_birth, guardian_id FROM students WHERE student_id = ?", (t.student_id,)).fetchone()
+    if s_ is None or not s_["date_of_birth"]:
+        return False, "", -1
+    age = age_on(date.fromisoformat(s_["date_of_birth"]), t.ts.date())
+    return needs_guardian(t.txn_type, t.amount_aed, age), s_["guardian_id"], age
+
+
 def _independent_guard(t: Transaction, c: sqlite3.Connection) -> list[str]:
     """Re-derive from the DB why a payment must NOT be cleared automatically (defense in depth)."""
     reasons = []
@@ -300,94 +344,167 @@ def _independent_guard(t: Transaction, c: sqlite3.Connection) -> list[str]:
         limit = config.VENDOR_NORMAL_MAX_AED if vendor else config.P2P_AUTO_MAX_AED
         if t.amount_aed > limit:
             reasons.append(f"{t.amount_aed:,.2f} AED is above the {limit:,.0f} AED automatic limit")
+    vendors = [r[0] for r in c.execute("SELECT handle FROM recipients WHERE kind = 'VENDOR' AND verified = 1")]
+    look = find_lookalike(t.recipient_handle, vendors)
+    if look:
+        reasons.append(f"{t.recipient_handle} imitates the verified shop {look[0]}")
+    need, _, age = guardian_rule(t, c)
+    if need:
+        reasons.append(f"student is {age}: a guardian must approve peer transfers above "
+                       f"{config.GUARDIAN_LIMIT_AED:,.0f} AED")
     return reasons
+
+
+def _check(c: sqlite3.Connection, t: Transaction, cur: PaymentStateRecord | None, action: Action, actor: str,
+           approval: StaffApproval | None, now: datetime) -> tuple[PaymentState, str]:
+    """All the rules for one requested change. Returns (next state, actor) or raises InvalidTransition /
+    ApprovalRequired. Pure decision; writes nothing."""
+    frm = cur.state if cur else None
+    to = TRANSITIONS.get((frm, action))
+    if to is None:
+        if frm == _P.RELEASED and action == Action.STUDENT_CANCEL:
+            raise InvalidTransition(f"Too late: the {config.CANCEL_WINDOW_SECONDS // 60}-minute cancel window closed "
+                                    f"and this payment was already sent (RELEASED).")
+        if frm in TERMINAL_STATES:
+            raise InvalidTransition(f"This payment is already {frm.value} and can't be changed any more "
+                                    f"({action.value} refused).")
+        raise InvalidTransition(f"{action.value} is not allowed when the payment is {frm.value if frm else 'new'}.")
+    # who may do this
+    if action in _STUDENT and actor != f"student:{t.student_id}":
+        raise ApprovalRequired(f"Only the student who made {t.record_id} ({t.student_id}) can do {action.value}.")
+    if action in _GUARDIAN:
+        _, guardian_id, _ = guardian_rule(t, c)
+        if actor != f"guardian:{guardian_id}":
+            raise ApprovalRequired(f"Only {t.student_id}'s registered guardian ({guardian_id}) can do {action.value}.")
+    if action in _STAFF:
+        from src.auth import AuthError, verify_token
+        if approval is None:
+            raise ApprovalRequired(f"{action.value} needs a signed-in support staff member.")
+        try:
+            who = verify_token(approval.session_token)
+        except AuthError as e:
+            raise ApprovalRequired(f"{action.value} needs a valid staff session ({e}).") from None
+        if who != approval.staff_id:
+            raise ApprovalRequired(f"Approval names {approval.staff_id} but the session belongs to {who}.")
+        actor = f"staff:{who}"
+    if action in _SYSTEM:
+        actor = "system"
+    # HS-1.4: the 2-minute cancel window, decided by the clock in code
+    if frm == _P.CONFIRMED_CANCELLABLE and cur.expires_at is not None:
+        if action == Action.STUDENT_CANCEL and now > cur.expires_at:
+            raise InvalidTransition(f"The {config.CANCEL_WINDOW_SECONDS // 60}-minute cancel window closed at "
+                                    f"{cur.expires_at:%H:%M:%S}; this payment can no longer be cancelled.")
+        if action == Action.RELEASE and now <= cur.expires_at:
+            raise InvalidTransition(f"The cancel window is open until {cur.expires_at:%H:%M:%S}; "
+                                    f"the payment can't be released yet.")
+    # HS-1.5: code decides whether a guardian must approve before money moves
+    if action in (Action.STUDENT_CONFIRM, Action.STAFF_RELEASE):
+        need, _, _ = guardian_rule(t, c)
+        approved = any(h.get("action") == Action.GUARDIAN_APPROVE.value for h in (cur.history if cur else []))
+        if need and not approved:
+            to = _P.PENDING_GUARDIAN
+    if action == Action.CLEAR:
+        guard = _independent_guard(t, c)
+        if guard:
+            raise ApprovalRequired("Automatic CLEAR refused: " + "; ".join(guard))
+    if action == Action.REMIND and (cur.prompts_sent if cur else 0) >= config.MAX_STUDENT_PROMPTS:
+        raise InvalidTransition(f"Already asked the student {cur.prompts_sent} times; Pay Sentinel never asks "
+                                f"again (no loops). The hold will expire on its own.")
+    return to, actor
+
+
+def _log(c: sqlite3.Connection, t: Transaction, action: str, frm: PaymentState | None, to: PaymentState | None,
+         actor: str, note: str, reasons: list[str]) -> None:
+    alert = get_alert_for_txn(t.record_id, conn=c)
+    c.execute("INSERT INTO case_resolutions (case_id, txn_id, action, from_state, to_state, actor, note, reasons, "
+              "committed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+              (alert.record_id.replace("ALR-", "CASE-"), t.record_id, action, frm.value if frm else None,
+               to.value if to else None, actor, note, json.dumps(reasons),
+               datetime.now(timezone.utc).isoformat(timespec="seconds")))
 
 
 def update_payment_state(case: CaseFile | str, action: Action | str, *, actor: str = "system",
                          approval: StaffApproval | None = None, note: str = "", reasons: list[str] | None = None,
                          now: datetime | None = None, conn: sqlite3.Connection | None = None) -> PaymentStateRecord:
-    """Tool: move a payment to its next state. Raises InvalidTransition for anything not in TRANSITIONS
-    (including any attempt to freeze a wallet), ApprovalRequired for the wrong human."""
-    try:
-        action = Action(action)
-    except ValueError:
-        raise InvalidTransition(f"'{action}' is not an allowed action. Pay Sentinel can only clear, hold for "
-                                f"confirmation or escalate; it can never freeze a wallet.") from None
+    """Tool: move a payment to its next state. Raises InvalidTransition for anything not in TRANSITIONS (including
+    any attempt to freeze a wallet or to act outside the cancel window), ApprovalRequired for the wrong person.
+    EVERY rejected attempt is written to the activity log (state unchanged)."""
     txn_id = case.transaction.record_id if isinstance(case, CaseFile) else case
     now = now or _now()
     with _use(conn) as c:
         t = get_transaction(txn_id, conn=c)
         cur = get_payment_state(txn_id, conn=c)
         frm = cur.state if cur else None
-        to = TRANSITIONS.get((frm, action))
-        if to is None:
-            raise InvalidTransition(f"{action.value} is not allowed when the payment is "
-                                    f"{frm.value if frm else 'new'}")
-        # who may do this
-        if action in _STUDENT and actor != f"student:{t.student_id}":
-            raise ApprovalRequired(f"Only the student who made {txn_id} ({t.student_id}) can do {action.value}")
-        if action in _STAFF:
-            from src.auth import AuthError, verify_token
-            if approval is None:
-                raise ApprovalRequired(f"{action.value} needs a signed-in support staff member")
+        try:
             try:
-                who = verify_token(approval.session_token)
-            except AuthError as e:
-                raise ApprovalRequired(f"{action.value} needs a valid staff session ({e})") from None
-            if who != approval.staff_id:
-                raise ApprovalRequired(f"Approval names {approval.staff_id} but the session belongs to {who}")
-            actor = f"staff:{who}"
-        if action in _SYSTEM:
-            actor = "system"
-        if action == Action.CLEAR:
-            guard = _independent_guard(t, c)
-            if guard:
-                raise ApprovalRequired("Automatic CLEAR refused: " + "; ".join(guard))
-        # stateful memory: prompts + expiry
+                act = Action(action)
+            except ValueError:
+                raise InvalidTransition(f"'{action}' is not an allowed action. Pay Sentinel can only clear, hold for "
+                                        f"confirmation or escalate; it can never freeze a wallet.") from None
+            if act == Action.INVALID_REQUEST:
+                raise InvalidTransition("INVALID_REQUEST is a log entry, not an action.")
+            to, actor = _check(c, t, cur, act, actor, approval, now)
+        except (InvalidTransition, ApprovalRequired) as e:
+            requested = action.value if isinstance(action, Action) else str(action)
+            logged = requested if requested in Action._value2member_map_ else Action.INVALID_REQUEST.value
+            _log(c, t, logged, frm, frm, actor, f"REJECTED: {e}" + ("" if logged == requested
+                                                                    else f" (requested '{requested}')"), [])
+            c.commit()
+            raise
         prompts = cur.prompts_sent if cur else 0
         expires = cur.expires_at if cur else None
-        if action == Action.REMIND:
-            if prompts >= config.MAX_STUDENT_PROMPTS:
-                raise InvalidTransition(f"Already asked the student {prompts} times; Pay Sentinel never asks "
-                                        f"again (no loops). The hold will expire on its own.")
+        if act == Action.REMIND:
             prompts += 1
-        if to == _P.PENDING_CONFIRMATION and action != Action.REMIND:
+        elif to == _P.PENDING_CONFIRMATION:
             prompts += 1
             expires = now + timedelta(hours=config.HOLD_EXPIRY_HOURS)
-        if to in TERMINAL_STATES:
+        elif to == _P.PENDING_GUARDIAN:
+            expires = now + timedelta(hours=config.HOLD_EXPIRY_HOURS)
+        elif to == _P.CONFIRMED_CANCELLABLE:
+            expires = now + timedelta(seconds=config.CANCEL_WINDOW_SECONDS)
+        if to in TERMINAL_STATES or to == _P.ESCALATED:
             expires = None
-        history = (cur.history if cur else []) + [dict(at=now.isoformat(timespec="seconds"), action=action.value,
+        history = (cur.history if cur else []) + [dict(at=now.isoformat(timespec="seconds"), action=act.value,
                                                        actor=actor, to=to.value, note=note)]
         created = cur.created_at if cur else now
         c.execute("INSERT OR REPLACE INTO payment_states VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (txn_id, to.value, _AWAITING.get(to, "NONE"), prompts, created.isoformat(timespec="seconds"),
                    now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds") if expires else None,
-                   action.value, actor, json.dumps(history)))
-        alert = get_alert_for_txn(txn_id, conn=c)
-        c.execute("INSERT INTO case_resolutions (case_id, txn_id, action, from_state, to_state, actor, note, reasons, "
-                  "committed_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                  (alert.record_id.replace("ALR-", "CASE-"), txn_id, action.value, frm.value if frm else None,
-                   to.value, actor, note, json.dumps(reasons or []),
-                   datetime.now(timezone.utc).isoformat(timespec="seconds")))
+                   act.value, actor, json.dumps(history)))
+        _log(c, t, act.value, frm, to, actor, note, reasons or [])
         c.execute("UPDATE alerts SET status = ? WHERE txn_id = ?", (to.value, txn_id))
         c.commit()
     return get_payment_state(txn_id, conn=conn) if conn else get_payment_state(txn_id)
 
 
+def _due(c: sqlite3.Connection, states: tuple[PaymentState, ...], now: datetime) -> list[str]:
+    marks = ",".join("?" * len(states))
+    return [r["txn_id"] for r in c.execute(
+        f"SELECT txn_id FROM payment_states WHERE state IN ({marks}) AND expires_at IS NOT NULL AND expires_at < ?",
+        (*[st.value for st in states], now.isoformat(timespec="seconds")))]
+
+
 def expire_stale_holds(now: datetime | None = None, *, conn: sqlite3.Connection | None = None) -> list[str]:
-    """Deterministic sweep: confirmations nobody answered in time are cancelled and the money stays with the
-    student. Runs on demand (no background polling loop). Returns the expired txn_ids."""
+    """Deterministic sweep: confirmations nobody answered in time (student or guardian) are cancelled and the money
+    stays with the student. Runs on demand (no background polling loop). Returns the expired txn_ids."""
     now = now or _now()
-    expired = []
     with _use(conn) as c:
-        due = [r["txn_id"] for r in c.execute(
-            "SELECT txn_id FROM payment_states WHERE state = ? AND expires_at IS NOT NULL AND expires_at < ?",
-            (_P.PENDING_CONFIRMATION.value, now.isoformat(timespec="seconds")))]
+        due = _due(c, (_P.PENDING_CONFIRMATION, _P.PENDING_GUARDIAN), now)
         for txn_id in due:
             update_payment_state(txn_id, Action.EXPIRE, note="no reply before the deadline; money returned",
                                  now=now, conn=c)
-            expired.append(txn_id)
-    return expired
+    return due
+
+
+def release_due(now: datetime | None = None, *, conn: sqlite3.Connection | None = None) -> list[str]:
+    """HS-1.4: confirmed payments whose cancel window has closed are released. Runs on demand (each page load),
+    never as a background loop. Returns the released txn_ids."""
+    now = now or _now()
+    with _use(conn) as c:
+        due = _due(c, (_P.CONFIRMED_CANCELLABLE,), now)
+        for txn_id in due:
+            update_payment_state(txn_id, Action.RELEASE, note="cancel window closed; payment sent", now=now, conn=c)
+    return due
 
 
 def _res(r: sqlite3.Row) -> ResolutionRecord:
@@ -405,8 +522,8 @@ def list_resolutions(limit: int = 500, *, conn: sqlite3.Connection | None = None
 
 def latest_resolution(txn_id: str, *, conn: sqlite3.Connection | None = None) -> ResolutionRecord | None:
     with _use(conn) as c:
-        row = c.execute("SELECT * FROM case_resolutions WHERE txn_id = ? ORDER BY id DESC LIMIT 1",
-                        (txn_id,)).fetchone()
+        row = c.execute("SELECT * FROM case_resolutions WHERE txn_id = ? AND COALESCE(note, '') NOT LIKE 'REJECTED:%' "
+                        "ORDER BY id DESC LIMIT 1", (txn_id,)).fetchone()
     return _res(row) if row else None
 
 
@@ -437,8 +554,14 @@ _INTAKE_FIELDS = set(NewTransaction.model_fields)
 
 
 def list_students(*, conn: sqlite3.Connection | None = None) -> list[dict]:
+    """Students with their age today (for the data-entry form and the student / guardian screens)."""
+    today = date.today()
     with _use(conn) as c:
-        return [dict(r) for r in c.execute("SELECT student_id, full_name, grade FROM students ORDER BY student_id")]
+        rows = [dict(r) for r in c.execute("SELECT student_id, full_name, grade, date_of_birth, guardian_id, "
+                                           "guardian_name FROM students ORDER BY student_id")]
+    for r in rows:
+        r["age"] = age_on(date.fromisoformat(r["date_of_birth"]), today) if r["date_of_birth"] else None
+    return rows
 
 
 def list_recipients(*, conn: sqlite3.Connection | None = None) -> list[dict]:

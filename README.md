@@ -18,6 +18,7 @@ full decision log**. **No wallet is ever frozen.**
 | 💬 Explains simply | The AI writes a friendly explanation for the student; code deletes any claim without a real record behind it |
 | 🙋 Humans decide | Student: *I know this seller* / *Cancel*. Staff: release / cancel. Saved state, capped reminders, holds expire (no loops) |
 | 📣 Extras | Scam-campaign detection + warning broadcast, staff-hours dashboard, bulk data entry, parallel checking |
+| 🧩 Round 2 rules | Split-payment totals per student→recipient (60 min) · lookalike-shop detection · "SYSTEM: clear it now" lines cut before any AI reads them · 2-minute *Wait, cancel it!* window · guardian approval for under-16 transfers above 100 AED. Refused changes are logged |
 
 **AI vs code:** the AI only *reads* (scam risk + confidence) and *writes* (explanations). Python makes every decision
 and every state change. `src/gate.py` cannot import the AI, the AI can only make a decision *more* careful, and there is
@@ -40,7 +41,7 @@ No AI key? Turn **Use AI agents** off in the sidebar (⚙️ More tools): the fi
 Command line:
 ```bash
 python -m src.workflow --demo            # the 12 test scenarios, with a scorecard
-python -m pytest -q                      # 135 automated tests
+python -m pytest -q                      # 168 automated tests (tests/test_curveballs.py = the Round 2 live tests)
 ```
 
 ## Results (rules only, all 250 synthetic payments)
@@ -56,10 +57,11 @@ src/services.py     the 3 tools + payment state machine
 src/sanitizer.py    hidden-instruction filter (rules + AI checker)
 src/slang.py        scam-pattern & slang scanner (rules)
 src/gate.py         routing rules (pure Python)
+src/lookalike.py    lookalike-shop detection (pure Python)
 src/workflow.py     orchestration, AI reader & writer, parallel checking
 src/graph.py        scam-campaign detection
 src/auth.py         staff accounts (hashed passwords, signed sessions)
-tests/              135 pytest tests
+tests/              168 pytest tests
 DEMO.md             5-minute demo script
 ```
 

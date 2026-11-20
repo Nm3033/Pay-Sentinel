@@ -106,6 +106,16 @@ def gather_evidence(case: CaseFile, conn: sqlite3.Connection, *, simulate_outage
                         + (" (looks like a campaign)." if n >= config.CAMPAIGN_MIN_STUDENTS else "."))
         except Exception as e:  # noqa: BLE001
             case.errors.append(f"compute_recipient_spread: {type(e).__name__}: {e}")
+    try:   # HS-1.1 split payments: rolling total from this student to this recipient
+        case.pair = services.compute_pair_window(t.student_id, t.recipient_handle, t.ts, upto_txn=t.record_id,
+                                                 conn=conn)
+        p = case.pair
+        if p.txn_count > 1:
+            _step(case, f"[CODE] Added up {t.student_id}'s payments to {t.recipient_handle} in the last "
+                        f"{config.SPLIT_WINDOW_MINUTES} minutes: {p.txn_count} payments, {p.total_aed:,.2f} AED in "
+                        f"total ({p.record_id}).")
+    except Exception as e:  # noqa: BLE001
+        case.errors.append(f"compute_pair_window: {type(e).__name__}: {e}")
 
 
 def _describe_context(case: CaseFile) -> str:
@@ -117,14 +127,21 @@ def _describe_context(case: CaseFile) -> str:
         age = (t.ts.date() - dev.first_seen).days
         where = (f"their usual phone (used for {age} days)" if dev.trusted and age >= config.NEW_DEVICE_DAYS
                  else f"a new phone ({age} days old)")
-    return (f"Looked up the payment: {c.student.full_name} ({c.student.record_id}, {c.student.grade}) paid from "
-            f"{where}; {c.velocity.txn_count} payment(s) in the last 24 hours.")
+    return (f"Looked up the payment: {c.student.full_name} ({c.student.record_id}, {c.student.grade}, age "
+            f"{c.student.age_on(t.ts.date())}) paid from {where}; {c.velocity.txn_count} payment(s) in the last "
+            f"24 hours.")
 
 
 def _describe_recipient(case: CaseFile) -> str:
     rc = case.recipient
+    look = (f" ⚠ The name imitates the verified shop {rc.lookalike_of} ({rc.lookalike_score:.0%} similar)."
+            if rc.lookalike_of else "")
     if not rc.found:
-        return f"Checked who receives the money: {rc.handle} is not a known PocketPay account."
+        return f"Checked who receives the money: {rc.handle} is not a known PocketPay account.{look}"
+    if look:
+        r = rc.recipient
+        return (f"Checked who receives the money: {r.handle} is NOT a verified shop ({r.record_id}, "
+                f"{rc.account_age_days} days old).{look}")
     r = rc.recipient
     if rc.verified_vendor:
         return f"Checked who receives the money: {r.display_name} is a verified campus vendor ({r.record_id})."
@@ -211,9 +228,12 @@ def code_explanation(case: CaseFile) -> str:
         return (f"Your {t.amount_aed:,.2f} AED payment to {t.recipient_name} went through. It looked like a normal "
                 f"payment, so there was nothing to check.")
     why = ", ".join(plain_reasons(case.gate.reasons)[:3])
+    guardian = (" After you confirm, your parent or guardian also needs to approve it."
+                if case.gate and "GUARDIAN" in case.gate.approvals else "")
     if r == Route.HOLD_FOR_CONFIRMATION:
         return (f"We paused your {t.amount_aed:,.2f} AED payment to {t.recipient_handle} for a moment because {why}. "
-                f"If you know this person, tap “I know this seller”. If not, cancel it, your money stays with you.")
+                f"If you know this person, tap “I know this seller”. If not, cancel it, your money stays with you."
+                + guardian)
     return (f"We paused your {t.amount_aed:,.2f} AED payment to {t.recipient_handle} and asked the campus support team "
             f"to take a look, because {why}. Your wallet still works as normal, and you can cancel this transfer.")
 
@@ -225,11 +245,13 @@ _RULE_TEXT = {"ignore_instructions": "an “ignore the rules” command", "syste
               "release_funds": "an “approve the payment” demand", "escalation_suppression": "a “no need to escalate” claim",
               "ai_addressing": "a message addressed to the AI", "json_directive": "a hidden JSON command",
               "arabic_ignore": "Arabic “ignore the instructions”", "arabic_approve": "Arabic “approve the transfer”",
-              "obfuscation:invisible_chars": "invisible characters", "obfuscation:homoglyphs": "look-alike letters"}
+              "obfuscation:invisible_chars": "invisible characters", "obfuscation:homoglyphs": "look-alike letters",
+              "role_prefix": "a fake “SYSTEM:” line", "clear_command": "a “clear it now” command",
+              "verification_claim": "a fake “already verified” claim"}
 _STAFF_TEXT = {"STAFF_RELEASE": "checked the case and released the payment",
                "STAFF_CANCEL": "cancelled this transfer (the student's wallet stays usable)",
                "STAFF_ASK_STUDENT": "handed it back to the student to confirm"}
-_STUDENT_TEXT = {"STUDENT_CONFIRM": "confirmed they know the seller, so the payment was sent",
+_STUDENT_TEXT = {"STUDENT_CONFIRM": "confirmed they know the seller",
                  "STUDENT_CANCEL": "cancelled the transfer; the money stays in their wallet",
                  "STUDENT_REPORT": "reported it as a scam, so it went to the support team"}
 
@@ -337,7 +359,8 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         # 5. fixed rules decide
         case.gate = evaluate_escalation_gate(
             t, case.context, case.recipient, case.signals, case.memo, case.chat, case.spread, case.assessment,
-            [e for e in case.errors if not e.startswith(("verify_campus_recipient", "assessor", "LLM init"))])
+            [e for e in case.errors if not e.startswith(("verify_campus_recipient", "assessor", "LLM init"))],
+            pair=case.pair)
         if case.gate.route == Route.CLEAR:
             _step(case, "[CODE] Applied the fixed payment rules: everything checks out.")
         else:
@@ -412,8 +435,11 @@ def _commit_route(case: CaseFile, conn: sqlite3.Connection) -> None:
         rec = services.update_payment_state(case, Action.ESCALATE, reasons=reasons, conn=conn)
     else:
         case.state = cur.state
-        _step(case, f"[CODE] Already waiting for the {cur.awaiting.lower()} since {cur.created_at:%d %b %H:%M}; "
-                    f"not asking again (no loops).")
+        if cur.awaiting in ("STUDENT", "STAFF", "GUARDIAN"):
+            _step(case, f"[CODE] Already waiting for the {cur.awaiting.lower()} since {cur.created_at:%d %b %H:%M}; "
+                        f"not asking again (no loops).")
+        else:
+            _step(case, f"[CODE] A person already decided ({cur.state.value}); nothing was changed.")
         return
     case.state = rec.state
     case.resolution = services.latest_resolution(t.record_id, conn=conn)
@@ -449,10 +475,21 @@ def staff_decide(case_id: str, option: str, session_token: str, note: str = "", 
                                         reasons=case.gate.reasons if case.gate else [], conn=conn)
     case.approval, case.state = approval, rec.state
     case.resolution = services.latest_resolution(case.transaction.record_id, conn=conn)
-    _step(case, f"[HUMAN] Support staff {staff_id} {_STAFF_TEXT[option]} ({case.resolution.record_id}).")
+    _step(case, f"[HUMAN] Support staff {staff_id} {_STAFF_TEXT[option]} ({case.resolution.record_id})."
+                + _after_text(rec))
     case.report_markdown = render_report(case)
     save_case(case)
     return case
+
+
+def _after_text(rec) -> str:
+    """What happens next, from the state code chose."""
+    if rec.state == PaymentState.PENDING_GUARDIAN:
+        return f" Next: their parent/guardian must approve it (the student is under {config.GUARDIAN_AGE})."
+    if rec.state == PaymentState.CONFIRMED_CANCELLABLE:
+        return (f" It will be sent at {rec.expires_at:%H:%M:%S} unless cancelled before then "
+                f"({config.CANCEL_WINDOW_SECONDS // 60}-minute cancel window).")
+    return ""
 
 
 def student_respond(case_id: str, option: str, student_id: str, *, conn: sqlite3.Connection | None = None) -> CaseFile:
@@ -464,10 +501,52 @@ def student_respond(case_id: str, option: str, student_id: str, *, conn: sqlite3
                                         reasons=case.gate.reasons if case.gate else [], conn=conn)
     case.state = rec.state
     case.resolution = services.latest_resolution(case.transaction.record_id, conn=conn)
-    _step(case, f"[HUMAN] Student {student_id} {_STUDENT_TEXT[option]} ({case.resolution.record_id}).")
+    _step(case, f"[HUMAN] Student {student_id} {_STUDENT_TEXT[option]} ({case.resolution.record_id})."
+                + _after_text(rec))
     case.report_markdown = render_report(case)
     save_case(case)
     return case
+
+
+GUARDIAN_OPTIONS = ("GUARDIAN_APPROVE", "GUARDIAN_DECLINE")
+_GUARDIAN_TEXT = {"GUARDIAN_APPROVE": "approved the transfer",
+                  "GUARDIAN_DECLINE": "declined the transfer; the money stays in the student's wallet"}
+
+
+def guardian_respond(case_id: str, option: str, guardian_id: str, *,
+                     conn: sqlite3.Connection | None = None) -> CaseFile:
+    """HS-1.5: the parent/guardian's decision. update_payment_state() checks it is the student's registered guardian."""
+    if option not in GUARDIAN_OPTIONS:
+        raise ValueError(f"{option} is not a guardian option")
+    case = load_saved_case(case_id)
+    rec = services.update_payment_state(case, Action(option), actor=f"guardian:{guardian_id}",
+                                        reasons=case.gate.reasons if case.gate else [], conn=conn)
+    case.state = rec.state
+    case.resolution = services.latest_resolution(case.transaction.record_id, conn=conn)
+    _step(case, f"[HUMAN] Guardian {guardian_id} {_GUARDIAN_TEXT[option]} ({case.resolution.record_id})."
+                + _after_text(rec))
+    case.report_markdown = render_report(case)
+    save_case(case)
+    return case
+
+
+def _sync_saved(txn_ids: list[str], state: PaymentState, text: str) -> None:
+    for txn_id in txn_ids:
+        path = CASES_DIR / f"{txn_id.replace('TXN-', 'CASE-')}.json"
+        if path.exists():
+            case = load_saved_case(path.stem)
+            case.state = state
+            _step(case, text)
+            case.report_markdown = render_report(case)
+            save_case(case)
+
+
+def release_due(now=None, *, conn: sqlite3.Connection | None = None) -> list[str]:
+    """HS-1.4: send confirmed payments whose cancel window has closed, and update their saved case files."""
+    released = services.release_due(now, conn=conn)
+    _sync_saved(released, PaymentState.RELEASED,
+                "[CODE] The cancel window closed with no cancel: the payment was sent (RELEASED).")
+    return released
 
 
 def remind_student(case_id: str, *, conn: sqlite3.Connection | None = None) -> CaseFile:
@@ -483,15 +562,9 @@ def remind_student(case_id: str, *, conn: sqlite3.Connection | None = None) -> C
 def expire_holds(now=None, *, conn: sqlite3.Connection | None = None) -> list[str]:
     """Expire unanswered confirmations (money returned) and update their saved case files."""
     expired = services.expire_stale_holds(now, conn=conn)
-    for txn_id in expired:
-        path = CASES_DIR / f"{txn_id.replace('TXN-', 'CASE-')}.json"
-        if path.exists():
-            case = load_saved_case(path.stem)
-            case.state = PaymentState.EXPIRED
-            _step(case, "[CODE] No reply before the deadline: the transfer was cancelled and the money stays with "
-                        "the student. The case is closed (no further prompts).")
-            case.report_markdown = render_report(case)
-            save_case(case)
+    _sync_saved(expired, PaymentState.EXPIRED, "[CODE] No reply before the deadline: the transfer was cancelled and "
+                                               "the money stays with the student. The case is closed (no further "
+                                               "prompts).")
     return expired
 
 

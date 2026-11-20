@@ -20,11 +20,13 @@ def txn(amount=15.0, handle="@campus_canteen", ttype="PURCHASE", device="DEV-000
                        amount_aed=amount, device_id=device, recipient_handle=handle, recipient_name="x")
 
 
-def ctx(t=None, age_days=400, trusted=True, n24=1):
+def ctx(t=None, age_days=400, trusted=True, n24=1, age=17):
     t = t or txn()
     return TransactionContext(
         transaction=t, student=StudentProfile(record_id="STU-0001", full_name="A B", grade="Grade 11",
-                                              joined_on=date(2024, 1, 1), usual_daily_spend_aed=20),
+                                              joined_on=date(2024, 1, 1), usual_daily_spend_aed=20,
+                                              date_of_birth=date(TS.year - age, 1, 1) - timedelta(days=1),
+                                              guardian_id="GRD-0001", guardian_name="P B"),
         devices=[Device(record_id="DEV-00001", student_id="STU-0001", fingerprint="f", os="iOS",
                         first_seen=TS.date() - timedelta(days=age_days), last_seen=TS.date(), trusted=trusted)],
         recent_logins=[], message=None,
@@ -116,7 +118,7 @@ def test_uncertain_if_either_side_is_unsure():
 
 @pytest.mark.parametrize("kwargs", [dict(r=None), dict(errors=["get_transaction_context: timeout"]),
                                     dict(c=ctx(age_days=2)), dict(c=ctx(trusted=False)),
-                                    dict(c=ctx(n24=config.VELOCITY_MAX_24H + 1))])
+                                    dict(c=ctx(n24=config.VELOCITY_MAX_24H + 1), t=txn(20, "@f", "P2P"), r=rc(**PEER))])
 def test_missing_data_or_odd_behaviour_only_pauses(kwargs):
     g = gate(**kwargs)
     assert g.route == Route.HOLD_FOR_CONFIRMATION  # never a block, never escalation on missing data alone

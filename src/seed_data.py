@@ -39,7 +39,7 @@ COUNTS = {
 
 SCHEMA = """
 CREATE TABLE students (student_id TEXT PRIMARY KEY, full_name TEXT NOT NULL, grade TEXT, joined_on TEXT,
-  usual_daily_spend_aed REAL);
+  usual_daily_spend_aed REAL, date_of_birth TEXT, guardian_id TEXT, guardian_name TEXT);
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, student_id TEXT REFERENCES students, fingerprint TEXT,
   os TEXT, first_seen TEXT, last_seen TEXT, trusted INTEGER);
 CREATE TABLE device_logins (login_id TEXT PRIMARY KEY, device_id TEXT REFERENCES devices, student_id TEXT,
@@ -149,6 +149,7 @@ LEGACY_RULES = ["KEYWORD_MATCH", "NEW_RECIPIENT", "LINK_IN_CHAT", "AMOUNT_SPIKE"
 
 class _Builder:
     def __init__(self, seed: int):
+        self.seed = seed
         self.r = random.Random(seed)
         self.students: list[dict] = []
         self.known_devices: dict[str, list[str]] = {}
@@ -311,6 +312,19 @@ class _Builder:
                      "SCAM", "memo_injection", "KEYWORD_MATCH", msg_text="" if in_note else text,
                      memo=text if in_note else "", variant=variant)
 
+    # ---- ages & guardians (separate RNG so transactions and IDs never shift) -------------------------
+    def make_ages(self) -> None:
+        """Date of birth consistent with the grade (Grade 9 ~ 14-15 ... Grade 12 ~ 17-18), plus a guardian."""
+        r = random.Random(self.seed + 2)
+        base_age = {"Grade 9": 14, "Grade 10": 15, "Grade 11": 16, "Grade 12": 17}
+        today = WINDOW_START.date()
+        for i, s in enumerate(self.students, 1):
+            age = base_age[s["grade"]] + (1 if r.random() < 0.5 else 0)       # turned that age within the last year
+            dob = today.replace(year=today.year - age) - timedelta(days=r.randint(20, 340))
+            s["date_of_birth"] = dob.isoformat()
+            s["guardian_id"] = f"GRD-{i:04d}"
+            s["guardian_name"] = f"{r.choice(FIRST_NAMES)} {s['full_name'].split(' ', 1)[1]}"
+
     # ---- 12 named demo scenarios ------------------------------------------------------------
     def gen_demo(self) -> None:
         r = self.r
@@ -371,7 +385,7 @@ class _Builder:
         try:
             conn.executescript(SCHEMA)
             conn.executemany("INSERT INTO students VALUES (:student_id,:full_name,:grade,:joined_on,"
-                             ":usual_daily_spend_aed)", self.students)
+                             ":usual_daily_spend_aed,:date_of_birth,:guardian_id,:guardian_name)", self.students)
             conn.executemany("INSERT INTO devices VALUES (:device_id,:student_id,:fingerprint,:os,:first_seen,"
                              ":last_seen,:trusted)", self.devices)
             conn.executemany("INSERT INTO device_logins VALUES (?,?,?,?,?,?)",
@@ -418,6 +432,7 @@ def build_database(db_path: str | Path = config.DB_PATH, seed: int = config.SEED
     b.make_reference()
     b.gen_background()
     b.gen_demo()
+    b.make_ages()
     b.write(Path(db_path))
     return b.summary()
 

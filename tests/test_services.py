@@ -109,8 +109,14 @@ def test_student_confirm_flow_and_identity(fresh):
     assert rec.expires_at is not None
     with pytest.raises(ApprovalRequired):        # another student can't confirm someone else's payment
         services.update_payment_state(tid, Action.STUDENT_CONFIRM, actor="student:STU-0999", conn=fresh)
-    done = services.update_payment_state(tid, Action.STUDENT_CONFIRM, actor=f"student:{student}", conn=fresh)
-    assert done.state == PaymentState.SENT and done.awaiting == "NONE" and done.expires_at is None
+    now = datetime(2026, 11, 20, 12, 0, 0)
+    done = services.update_payment_state(tid, Action.STUDENT_CONFIRM, actor=f"student:{student}", now=now,
+                                         conn=fresh)
+    assert done.state == PaymentState.CONFIRMED_CANCELLABLE and done.awaiting == "NONE"     # cancel window open
+    assert done.expires_at == now + timedelta(seconds=config.CANCEL_WINDOW_SECONDS)
+    assert services.release_due(now + timedelta(seconds=60), conn=fresh) == []             # not yet
+    assert services.release_due(now + timedelta(minutes=3), conn=fresh) == [tid]
+    assert services.get_payment_state(tid, conn=fresh).state == PaymentState.RELEASED
     with pytest.raises(InvalidTransition):       # finished payments can't change again
         services.update_payment_state(tid, Action.STUDENT_CANCEL, actor=f"student:{student}", conn=fresh)
 
