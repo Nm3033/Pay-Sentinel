@@ -38,9 +38,64 @@ _ID_RX = re.compile(r"\b(?:TXN|ALR|STU|DEV|LGN|MSG|RCP|VEL|SPR)-[A-Za-z0-9-]*[A-
 _progress: ContextVar[Callable[[str], object] | None] = ContextVar("progress", default=None)
 
 
+# The check as a flowchart (shown live in the app). (key, title, who does it, what it does in plain words)
+FLOW = [
+    ("read", "Read the message", "CODE + AI", "Removes hidden instructions aimed at the AI; an AI safety checker "
+                                              "double-checks the text"),
+    ("scan", "Scan for scam signs", "CODE", "Urgency, unofficial links, too-good deals, slang the rules can't read"),
+    ("ai_read", "AI reads the message", "AI", "How risky it sounds and how sure the AI is (advice only)"),
+    ("facts", "Check the facts", "TOOLS", "The student, their phone, who gets the money, trust score, scam reports, "
+                                          "running totals"),
+    ("rules", "Rules decide", "CODE", "Fixed Python rules: send, ask the student, or send to staff"),
+    ("ai_write", "AI explains", "AI", "A friendly note for the student and a summary for staff; every claim is "
+                                      "checked against real records"),
+    ("decide", "Decision saved", "CODE", "Final decision (the AI can only make it more careful) and the payment's "
+                                         "saved state"),
+]
+_PREFIX = re.compile(r"^\[(CODE|LLM |HUMAN)\]\s*")
+
+
+class _Flow:
+    """Tracks the check stage by stage (waiting -> working -> done / skipped / fallback) for the live flowchart."""
+
+    def __init__(self, case: CaseFile, cb: Callable[[list[dict]], object] | None):
+        self.case, self.cb, self.cur, self.t0, self.lines = case, cb, None, 0.0, []
+        self.items = {k: dict(key=k, title=t, who=w, about=a, status="waiting", text="", seconds=None)
+                      for k, t, w, a in FLOW}
+        self._tell()
+
+    def begin(self, key: str) -> None:
+        self.cur, self.t0, self.lines = key, time.monotonic(), []
+        self.items[key]["status"] = "working"
+        self._tell()
+
+    def line(self, msg: str) -> None:
+        if self.cur:
+            self.lines.append(_PREFIX.sub("", msg))
+
+    def end(self, status: str = "done", text: str | None = None) -> None:
+        if not self.cur:
+            return
+        self.items[self.cur].update(status=status, text=text if text is not None else " ".join(self.lines),
+                                    seconds=round(time.monotonic() - self.t0, 2))
+        self.cur = None
+        self._tell()
+
+    def _tell(self) -> None:
+        self.case.stages = [dict(v) for v in self.items.values()]
+        if self.cb:
+            self.cb(self.case.stages)
+
+
+_flow: ContextVar[_Flow | None] = ContextVar("flow", default=None)
+
+
 def _step(case: CaseFile, msg: str) -> None:
     """Append to the case's decision log and stream it to the UI (if a progress callback is set)."""
     case.trace.append(msg)
+    f = _flow.get()
+    if f:
+        f.line(msg)
     cb = _progress.get()
     if cb:
         cb(msg)
@@ -339,7 +394,9 @@ def _route_action(r: Route) -> Action:
 
 def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Connection | None = None,
              commit: bool = True, save: bool = True, simulate_outage: bool = False,
-             progress: Callable[[str], object] | None = None) -> CaseFile:
+             progress: Callable[[str], object] | None = None,
+             on_flow: Callable[[list[dict]], object] | None = None) -> CaseFile:
+    """Check one flagged payment. on_flow(stages) is called live as each flowchart stage starts and finishes."""
     from src.llm import CASE_DEADLINE, USAGE_SINK
 
     own = conn is None
@@ -349,8 +406,11 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
     usage_token = USAGE_SINK.set(usage)
     started = time.monotonic()
     deadline_token = CASE_DEADLINE.set(started + config.CASE_TIME_LIMIT_S)   # Round 3: per-payment limit
+    flow_token = None
     try:
         case = load_case(alert_id, conn)
+        flow = _Flow(case, on_flow)
+        flow_token = _flow.set(flow)
         case.checked_at = datetime.now()
         t = case.transaction
         kind = "purchase" if t.txn_type == "PURCHASE" else "transfer to another student"
@@ -365,6 +425,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                 use_llm = False
 
         # 1. untrusted text: chat message + payment note -> sanitizer (regex + AI checker)
+        flow.begin("read")
         msg = services.get_message(t.message_id, conn=conn) if t.message_id else None
         raw_chat = msg.text if msg else ""
         case.chat = sanitize_memo(raw_chat, use_llm=use_llm, llm=llm) if raw_chat else None
@@ -374,8 +435,12 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         for label, s, raw in (("chat message", case.chat, raw_chat), ("payment note", case.memo, t.memo)):
             for line in _screen_steps(label, s, raw):
                 _step(case, line)
+        has_text = bool(raw_chat or t.memo)
+        flow.end("skipped" if not has_text else
+                 "fallback" if any(x and x.agent_verdict == "UNAVAILABLE" for x in (case.chat, case.memo)) else "done")
 
         # 2. fixed scam & slang scan of the cleaned text (code)
+        flow.begin("scan")
         if raw_chat or t.memo:
             case.signals = scan_text(case.chat.clean_text if case.chat else "",
                                      case.memo.clean_text if case.memo else "")
@@ -384,9 +449,11 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                         + (f"⚠ {', '.join(found)}." if found else "none found.")
                         + (f" Slang the rules can't read: {', '.join(case.signals.unclear_terms)}."
                            if case.signals.unclear_terms else ""))
+        flow.end("done" if has_text else "skipped", None if has_text else "No message to scan.")
 
         # 3. AI reads the message (advisory; confidence matters)
         llm_route = None
+        flow.begin("ai_read")
         if use_llm and (raw_chat or t.memo):
             from src.llm import LLMError
             try:
@@ -402,11 +469,17 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
             except LLMError as e:
                 case.errors.append(f"assessor: {e}")
                 _step(case, "[LLM ] AI message reader unavailable; using the fixed scam/slang scan only.")
+        flow.end("skipped" if not has_text or not use_llm else "fallback" if case.assessment is None else "done",
+                 "No message to read." if not has_text else "AI switched off: the fixed scan decides." if not use_llm
+                 else None)
 
         # 4. tools
+        flow.begin("facts")
         gather_evidence(case, conn, simulate_outage=simulate_outage)
+        flow.end("fallback" if any(e.startswith("verify_campus_recipient") for e in case.errors) else "done")
 
         # 5. fixed rules decide
+        flow.begin("rules")
         case.gate = evaluate_escalation_gate(
             t, case.context, case.recipient, case.signals, case.memo, case.chat, case.spread, case.assessment,
             [e for e in case.errors if not e.startswith(("verify_campus_recipient", "assessor", "LLM init"))],
@@ -416,8 +489,10 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         else:
             _step(case, "[CODE] Applied the fixed payment rules: found " + ", ".join(plain_reasons(case.gate.reasons))
                         + ".")
+        flow.end()
 
         # 6. AI writes the explanation for paused payments (citations checked by code)
+        flow.begin("ai_write")
         if case.gate.route != Route.CLEAR and use_llm:
             from src.llm import LLMError
             try:
@@ -432,6 +507,10 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
             except LLMError as e:
                 case.errors.append(f"writer: {e}")
                 _step(case, "[LLM ] AI explanation writer unavailable; a standard explanation is used instead.")
+        flow.end("skipped" if case.gate.route == Route.CLEAR or not use_llm else
+                 "fallback" if any(e.startswith("writer") for e in case.errors) else "done",
+                 "Not needed: a safe payment is just sent." if case.gate.route == Route.CLEAR
+                 else "AI switched off: a standard explanation is used." if not use_llm else None)
         if use_llm:
             case.llm_usage = list(usage)
         case.notices = resilience_notices(case, usage)
@@ -440,6 +519,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                         "skipped and the fixed rules finished the check (never a less careful decision).")
 
         # 7. final decision (AI can only make it more careful)
+        flow.begin("decide")
         case.final_route = route(case.gate.route, llm_route)
         raised = case.final_route != case.gate.route
         _step(case, {Route.CLEAR: "[CODE] Decision: CLEAR. Safe everyday payment, sent automatically.",
@@ -458,6 +538,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         # 8. stateful memory: record the state (idempotent; never re-prompts, never loops)
         if commit:
             _commit_route(case, conn)
+        flow.end()
         case.ai_on, case.check_seconds = use_llm, round(time.monotonic() - started, 3)   # measured, for the pilot
         case.report_markdown = render_report(case)
         if save:
@@ -467,6 +548,8 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         _progress.reset(token)
         USAGE_SINK.reset(usage_token)
         CASE_DEADLINE.reset(deadline_token)
+        if flow_token is not None:
+            _flow.reset(flow_token)
         if own:
             conn.close()
 

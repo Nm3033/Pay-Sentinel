@@ -42,7 +42,7 @@ def test_round3_stage_path(fresh_db, officer_passwords, monkeypatch):
     assert any("4 of 5 payments checked" in w.value for w in at.warning)
     assert any("backup AI (qwen/qwen3.8-27b) took over" in m.value for m in at.markdown)
     at.selectbox(key="ai_mode").set_value("normal").run(); assert not at.exception, at.exception
-    assert not any("Failure test on" in w.value for w in at.sidebar.warning)      # switched back off
+    assert not any("Failure test on" in w.value for w in at.warning)      # switched back off
 
     # ... same session. Area 1: type a payment -> journey -> staff hand-off -> cancel -> back -> outcome + report
     next(b for b in at.button if b.label.startswith("Use example: Ticket scam")).click().run()

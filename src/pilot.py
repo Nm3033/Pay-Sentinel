@@ -131,6 +131,6 @@ MONITORING = [
     "Activity log: every state change, refused attempt and refused entry, with who and why (CSV export).",
     "Safety evidence: the three Round 3 cases with their log entries (Markdown/CSV export).",
     "Results: scams that got through (target 0), staff queue precision, AI calls, tokens, cost and latency.",
-    "Failure notices on each payment (AI down, rate limit, time limit, directory timeout) and the sidebar warning "
+    "Failure notices on each payment (AI down, rate limit, time limit, directory timeout) and the warning at the top "
     "when a failure test is switched on.",
 ]

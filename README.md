@@ -29,8 +29,8 @@ no "freeze wallet" action anywhere in the code.
 | Round 3 area | Where in the app |
 |---|---|
 | 1 · End-to-end workflow | ➕ **Add payments** → type a payment → **🧭 Follow its journey**: flagged → checked → a person answers → decided → the student's outcome + a decision report |
-| 2 · Workload resilience | ➕ **Add payments** → **⚡ Workload test** (5 back to back, one broken input) · sidebar ⚙️ More tools → **AI provider (failure test)** |
-| 3 · Safety & accountability | 🏠 Start page → **🛡️ Safety evidence** → **▶ Run the 3 safety cases live** (safe → automatic, risky → paused, attack → blocked), each with its log entry; export .md / .csv |
+| 2 · Workload resilience | ➕ **Add payments** → **⚡ Workload test** (5 back to back, one broken input) · ⚙️ **Tools** (top right) → **AI provider (failure test)** |
+| 3 · Safety & accountability | 🏠 Home → **🛡️ Safety evidence** → **▶ Run the 3 safety cases live** (safe → automatic, risky → paused, attack → blocked), each with its log entry; export .md / .csv |
 | 4 · Deployment reality | 📊 Results → **🚀 Pilot plan** and [`DEPLOYMENT.md`](DEPLOYMENT.md): who runs it, where, USD 0.0008 per payment, about USD 4–30 a month, speed, limitations |
 
 ## Run it locally
@@ -45,12 +45,12 @@ streamlit run app.py              # the demo dataset is generated automatically 
 or the Streamlit secrets. If the primary AI fails or hits its rate limit, the next one answers automatically, and
 the decision log says which AI answered. If all are down, the fixed rules still decide every payment.
 
-No AI key? Turn **Use AI agents** off in the sidebar (⚙️ More tools): the fixed rules still catch every scam.
+No AI key? Turn **Use AI agents** off in ⚙️ **Tools** (top right): the fixed rules still catch every scam.
 
 Command line:
 ```bash
 python -m src.workflow --demo            # the 12 test scenarios, with a scorecard
-python -m pytest -q                      # 209 automated tests (never calls a real AI provider)
+python -m pytest -q                      # 214 automated tests (never calls a real AI provider)
 ```
 
 ## Results (rules only, all 200 synthetic payments)
@@ -73,7 +73,7 @@ src/auth.py         staff accounts (hashed passwords, signed sessions)
 src/journey.py      Round 3: one payment's journey, trigger to outcome (read-only)
 src/evidence.py     Round 3: the three safety cases from the activity log + export
 src/pilot.py        Round 3: measured cost / speed and the pilot plan
-tests/              209 pytest tests
+tests/              214 pytest tests
 DEMO.md             demo scripts (Round 3: 7-minute live demo + Q&A)
 DEPLOYMENT.md       Round 3: who runs it, where, costs, speed, limitations
 docs/round3/        Round 3 baseline, log evidence and deck content

@@ -157,7 +157,7 @@ def test_app_every_ai_down_is_handled_and_flagged(conn, officer_passwords, monke
     monkeypatch.setattr(src.llm, "get_llm", lambda: fakes)
     at = _workload_in_app(officer_passwords, use_llm=True, ai_mode="all")
     assert not any(c.calls for c in fakes.clients)                   # "all down": no AI was even called
-    assert any("Failure test on" in w.value for w in at.sidebar.warning)    # the demo state is always visible
+    assert any("Failure test on" in w.value for w in at.warning)    # the demo state is always visible
     notes = " ".join(_status_table(at)["What happened"])
     assert "Every AI was switched off" in notes
     assert any("4 of 5 payments checked" in w.value for w in at.warning)

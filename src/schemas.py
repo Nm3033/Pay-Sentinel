@@ -333,6 +333,7 @@ class CaseFile(Strict):
     checked_at: datetime | None = None   # when Pay Sentinel last checked this payment
     check_seconds: float | None = None   # Round 3: how long the whole check took (measured, for the pilot plan)
     ai_on: bool | None = None            # Round 3: was the AI switched on for this check (cost per AI-on payment)
+    stages: list[dict] = []              # the check as a flowchart: key, title, who, status, text, seconds
 
 
 class NewTransaction(Strict):

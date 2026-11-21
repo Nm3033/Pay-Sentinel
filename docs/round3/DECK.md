@@ -24,7 +24,7 @@ Team · school · TechX Dubai '26 AI Agent Arena · High School track · live li
 | When something fails | AI rate limits: generic errors | Backup AI, a 20 s limit per check, the rules finish, failures explained in plain words |
 | Safety proof | A log with no way to show it | 3 safety cases, live, each with a log entry, plus refused entries logged; exported |
 | Cost | Not known ("n/a") | Measured: $0.0008 per payment |
-| Tests | 171 | 209, including a full demo rehearsal |
+| Tests | 171 | 214, including a full demo rehearsal |
 
 Unchanged and still true: 0/40 scams sent automatically · 12/12 unclear messages sent to a person · 82% of safe
 payments instant.

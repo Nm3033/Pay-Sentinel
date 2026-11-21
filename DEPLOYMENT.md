@@ -84,7 +84,7 @@ pilot.
   entries (Markdown/CSV export).
 - **Results:** scams that got through (target 0), staff queue precision, AI calls, tokens, cost and latency.
 - **Failure notices:** each payment shows a notice when something went wrong (AI down, rate limit, time limit,
-  directory timeout), and the sidebar warns while a failure test is switched on.
+  directory timeout), and a warning at the top of every page while a failure test is switched on.
 
 ## Running it
 - **Today:** push to GitHub; Streamlit Community Cloud redeploys. The AI keys and staff accounts live in the app's

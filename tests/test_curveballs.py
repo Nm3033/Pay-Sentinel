@@ -348,7 +348,7 @@ def test_app_student_page_wait_cancel_and_refusal(conn, officer_passwords):
     at = _app(officer_passwords)
     at.button(key="try3").click().run()
     assert not at.exception, at.exception
-    at.selectbox[0].select(stu).run()
+    at.selectbox(key="student_sel").select(stu).run()
     at.button(key=f"rc_{cleared.transaction.record_id}").click().run()     # cancel a cleared payment: refused
     assert not at.exception, at.exception
     assert any("Refused" in e.value for e in at.error)

@@ -222,6 +222,19 @@ student-facing message plus a downloadable decision report.
     wrong payment. The staff and student dropdowns are now keyed (`gate_sel`, `student_sel`). Regression test:
     `test_staff_action_after_hand_off_hits_the_handed_payment_only`; it fails on the old code.
 
+### UI redesign (after Phase 5, at the team's request): simpler, judge-friendly, same features and colours
+- **Navigation:** a top bar replaces the sidebar (`st.navigation(position="top")`): 🏠 Home · Check payments ▾ ·
+  People decide ▾ · Results & proof ▾. A slim strip holds ▶ Run 12 test scenarios, ⚙️ Tools (everything from the old
+  sidebar) and 👤 user (session, theme hint, sign out). The failure-test warning shows there too.
+- **Home:** one-line purpose, two start buttons, "How it works" as a 7-step flowchart, the 3 outcomes, and "What each
+  tab does" cards (one plain sentence + an Open button per tab; keys `try1`–`try11`). The Round 2 rules and the
+  glossary moved into "More details".
+- **Live flowchart:** `workflow.FLOW` plus a per-stage tracker (`_Flow`, `run_case(on_flow=...)`, `CaseFile.stages`).
+  Payment details (and adding one payment) shows each step go working → done / skipped / AI fallback in real time,
+  with what it found and how long it took. AI steps have a lavender top. Verified live: the "working" highlight moves
+  read → AI reads → AI explains in about 2.5 s.
+- **Tests:** `tests/test_flow.py` (5). Suite: 214 passed.
+
 Priority if time runs short (the round is on 21 Nov 2026): Phase 0 → 3 (the log evidence is a required deliverable)
 → 2 → 1 → 4 (can be mostly the doc and the page) → 5.
 

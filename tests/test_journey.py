@@ -153,7 +153,7 @@ def test_app_journey_from_typed_payment_to_outcome(conn, officer_passwords):
     assert any("This payment's journey" in md.value for md in at.markdown)
     at.button(key="j_staff").click().run()                                 # hand-off: staff page, already picked
     assert not at.exception, at.exception
-    assert at.selectbox[0].value == new
+    assert at.selectbox(key="gate_sel").value == new
     at.button(key="STAFF_CANCEL").click().run()
     assert not at.exception, at.exception
     txn = services.get_alert(new, conn=conn).txn_id
