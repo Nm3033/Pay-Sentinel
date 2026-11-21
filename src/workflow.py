@@ -347,7 +347,8 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
     token = _progress.set(progress)
     usage: list[dict] = []                      # this case's own AI usage (safe when cases run in parallel)
     usage_token = USAGE_SINK.set(usage)
-    deadline_token = CASE_DEADLINE.set(time.monotonic() + config.CASE_TIME_LIMIT_S)   # Round 3: per-payment limit
+    started = time.monotonic()
+    deadline_token = CASE_DEADLINE.set(started + config.CASE_TIME_LIMIT_S)   # Round 3: per-payment limit
     try:
         case = load_case(alert_id, conn)
         case.checked_at = datetime.now()
@@ -457,6 +458,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
         # 8. stateful memory: record the state (idempotent; never re-prompts, never loops)
         if commit:
             _commit_route(case, conn)
+        case.ai_on, case.check_seconds = use_llm, round(time.monotonic() - started, 3)   # measured, for the pilot
         case.report_markdown = render_report(case)
         if save:
             save_case(case)

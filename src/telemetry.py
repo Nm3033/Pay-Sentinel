@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from pydantic import BaseModel
 
 from src import config, services
+from src.pilot import usage_cost
 from src.schemas import CaseFile, Route
 
 TRUE_CLASSES = ["Safe", "Scam", "Uncertain", "Hidden instructions"]
@@ -50,6 +51,7 @@ class Telemetry(BaseModel):
     by_purpose: list[dict]
     findings_kept: int
     findings_dropped: int
+    unpriced_models: list[str] = []   # AI models with no known price (their calls are not in cost_usd)
 
 
 def _ground_truth(conn: sqlite3.Connection) -> dict[str, tuple[str | None, int | None]]:
@@ -95,7 +97,7 @@ def compute_telemetry(cases: list[CaseFile], *, conn: sqlite3.Connection | None 
     usage = [u for c in cases for u in c.llm_usage]
     t_in = sum(u["prompt_tokens"] for u in usage)
     t_out = sum(u["completion_tokens"] for u in usage)
-    cost = (t_in * config.LLM_COST_PER_1M_INPUT + t_out * config.LLM_COST_PER_1M_OUTPUT) / 1e6
+    cost, unpriced = usage_cost(usage)       # each call priced by the model that answered (config price table)
     purpose: dict[str, list[dict]] = defaultdict(list)
     for u in usage:
         purpose[u["purpose"] or "other"].append(u)
@@ -125,7 +127,7 @@ def compute_telemetry(cases: list[CaseFile], *, conn: sqlite3.Connection | None 
         avg_latency_s=round(sum(u["latency_s"] for u in usage) / len(usage), 2) if usage else 0.0,
         cost_usd=round(cost, 4), cost_per_case_usd=round(cost / n, 5) if n else 0.0, by_purpose=by_purpose,
         findings_kept=sum(len(c.investigation.findings) for c in cases if c.investigation),
-        findings_dropped=sum(len(c.dropped_findings) for c in cases),
+        findings_dropped=sum(len(c.dropped_findings) for c in cases), unpriced_models=sorted(unpriced),
     )
 
 

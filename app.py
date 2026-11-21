@@ -642,7 +642,9 @@ def page_home() -> None:
               f"a student under {config.GUARDIAN_AGE}.", "👪 Open guardian app", lambda: st.switch_page(P_GUARDIAN)),
              ("See the 3 safety cases", "A safe payment sent automatically, a risky one paused for a person and an "
               "attack blocked, each backed by its activity-log entry.", "🛡️ Safety evidence",
-              lambda: (ss.__setitem__("audit_view", SAFETY_VIEW), st.switch_page(P_AUDIT)))]
+              lambda: (ss.__setitem__("audit_view", SAFETY_VIEW), st.switch_page(P_AUDIT))),
+             ("Plan a pilot", "Who runs it, where it's hosted, what it costs per payment and per month, how fast it "
+              "is, and what it still can't do.", "🚀 Pilot plan", lambda: st.switch_page(P_PILOT))]
     for i, (title, desc, btn, fn) in enumerate(tries, 1):
         with st.container(border=True):
             a, b = st.columns([4, 1.3], vertical_alignment="center")
@@ -1285,10 +1287,12 @@ def page_roi() -> None:
     k[0].metric("AI calls", tel.llm_calls, border=True)
     k[1].metric("Tokens / payment", f"{(tel.tokens_in + tel.tokens_out) / tel.triaged:,.0f}", border=True)
     k[2].metric("Avg latency / call", f"{tel.avg_latency_s:.2f} s", border=True)
-    priced = config.LLM_COST_PER_1M_INPUT or config.LLM_COST_PER_1M_OUTPUT
+    priced = tel.llm_calls > 0 and not tel.unpriced_models
     k[3].metric("Compute cost / payment", f"${tel.cost_per_case_usd:.5f}" if priced else "n/a", border=True,
-                help=f"Total ${tel.cost_usd:.4f}" if priced else
-                "Set LLM_COST_PER_1M_INPUT/OUTPUT in .env from your provider's pricing page")
+                help=(f"Total ${tel.cost_usd:.4f}; each AI call priced by the model that answered "
+                      f"(prices checked {config.LLM_PRICES_CHECKED})") if priced else
+                ("No AI calls yet" if not tel.llm_calls else
+                 f"No price for {', '.join(tel.unpriced_models)}: add it to LLM_PRICES_PER_1M in src/config.py"))
     k[4].metric("Made-up findings deleted", tel.findings_dropped, border=True,
                 help=f"{tel.findings_kept} citation-verified findings kept")
     if tel.by_purpose:
@@ -1416,6 +1420,68 @@ def page_audit() -> None:
         "When": st.column_config.DatetimeColumn(format="MMM D, HH:mm:ss"),
         "Reasons": st.column_config.TextColumn(width="large")})
     st.download_button("⬇️ Download full log (.csv)", full.to_csv(index=False), file_name="pay_sentinel_audit_log.csv")
+
+
+def page_pilot() -> None:
+    """Round 3, Area 4: deployment reality, computed from the payments checked in this app."""
+    from src import pilot
+    hero("🚀 Pilot plan", "Who runs Pay Sentinel, where it runs, what it costs, how fast it is, and what it still "
+                          "can't do.")
+    how_to("Costs and speeds below are <b>measured</b> on the payments checked in this app (tokens and time of every "
+           f"check), priced with the AI provider's published prices ({html.escape(config.LLM_PRICES_CHECKED)}), then "
+           f"scaled to the brief's <b>{config.PILOT_FLAGGED_PER_DAY} flagged payments a day</b> over "
+           f"{config.PILOT_SCHOOL_DAYS_PER_MONTH} school days a month.")
+    est = pilot.estimate(list(cases.values()))
+
+    st.markdown("#### 👥 Who runs it")
+    st.table(pd.DataFrame(pilot.WHO, columns=["Who", "What they do"]).set_index("Who"))
+    st.markdown("#### 🏠 Where it runs")
+    st.table(pd.DataFrame(pilot.WHERE, columns=["Stage", "Where", "Cost", "Notes"]).set_index("Stage"))
+
+    st.markdown("#### 💰 What it costs")
+    if not est.ai_checked:
+        st.info("No payment has been checked with the AI switched on yet, so there is nothing to measure. Press "
+                "**▶ Run 12 test scenarios** (with ⚙️ More tools → Use AI agents on), then come back.", icon="📏")
+    else:
+        m = st.columns(4)
+        m[0].metric("AI cost per payment", f"${est.cost_per_payment_usd:.5f}", border=True,
+                    help=f"Measured over {est.ai_checked} AI-on checks, {est.tokens_per_payment:,.0f} tokens each on "
+                         "average (many safe payments need no AI call at all)")
+        m[1].metric(f"Per day ({est.per_day} payments)", f"${est.cost_per_day_usd:.2f}", border=True)
+        m[2].metric(f"Per month ({est.days_per_month} school days)", f"${est.cost_per_month_usd:.2f}", border=True)
+        m[3].metric("Worst-case month", f"${est.worst_cost_per_month_usd:.2f}", border=True,
+                    help="If every AI call were answered by the most expensive model in the price list")
+        st.caption(f"Plus hosting: free on Streamlit Community Cloud today; about USD 5–15 a month on a small server "
+                   f"for a real pilot. Rules-only checks cost nothing.")
+        if est.unpriced_models:
+            st.warning(f"No price for {', '.join(est.unpriced_models)}; add it to LLM_PRICES_PER_1M in "
+                       "src/config.py. Those calls are not in the totals.", icon="💲")
+    st.dataframe(pd.DataFrame([dict(Model=m_, Role="main AI" if m_ == config.LLM_MODEL else "backup AI",
+                                    **{"USD per 1M input tokens": p[0], "USD per 1M output tokens": p[1]})
+                               for m_, p in config.LLM_PRICES_PER_1M.items()]), hide_index=True, width="stretch")
+
+    st.markdown("#### ⏱️ How fast it is")
+    m = st.columns(4)
+    m[0].metric("One check, with AI (median)", f"{est.seconds_ai:.1f} s" if est.seconds_ai is not None else "n/a",
+                border=True)
+    m[1].metric("Slowest check with AI", f"{est.seconds_ai_slowest:.1f} s" if est.seconds_ai_slowest is not None
+                else "n/a", border=True, help=f"Every check is capped at {config.CASE_TIME_LIMIT_S:.0f} s; then the "
+                                                "fixed rules finish it")
+    m[2].metric("One check, rules only", f"{est.seconds_rules * 1000:.0f} ms" if est.seconds_rules is not None
+                else "n/a", border=True)
+    m[3].metric("Staff time saved", f"{est.staff_hours_saved_per_day:.1f} h / day", border=True,
+                help=f"{est.staff_minutes_saved_per_payment:.1f} min per flagged payment: "
+                     f"{config.STAFF_MIN_PER_REVIEW:g} min by hand today vs {config.STAFF_MIN_ASSISTED:g} min only for "
+                     f"escalated ones (assumptions in src/config.py); about {est.staff_hours_saved_per_month:,.0f} h a month")
+
+    st.markdown("#### 🚧 What it still can't do")
+    st.markdown("\n".join(f"- {x}" for x in pilot.LIMITATIONS))
+    st.markdown("#### 🔭 How we keep an eye on it")
+    st.markdown("\n".join(f"- {x}" for x in pilot.MONITORING))
+    doc = Path(__file__).resolve().parent / "DEPLOYMENT.md"
+    if doc.exists():
+        st.download_button("⬇️ Deployment plan (DEPLOYMENT.md)", doc.read_text(encoding="utf-8"),
+                           file_name="DEPLOYMENT.md", key="dl_deploy")
 
 
 # ---- data entry -------------------------------------------------------------------------------------------
@@ -1760,12 +1826,13 @@ P_GATE = st.Page(page_gate, title=f"Staff review ({pending})", icon="🧑‍💼
 P_ADD = st.Page(page_add, title="Add payments", icon="➕", url_path="add")
 P_ROI = st.Page(page_roi, title="Results", icon="📊", url_path="results")
 P_AUDIT = st.Page(page_audit, title="Activity log", icon="📜", url_path="activity-log")
+P_PILOT = st.Page(page_pilot, title="Pilot plan", icon="🚀", url_path="pilot-plan")
 P_CAMPAIGNS = st.Page(page_campaigns, title="Scam alerts", icon="📣", url_path="scam-alerts")
 nav = st.navigation({
     "": [P_HOME],
     "1 · Check payments": [P_QUEUE, P_INVESTIGATE, P_ADD],
     "2 · People decide": [P_STUDENT, P_GUARDIAN, P_GATE],
-    "3 · Results": [P_ROI, P_CAMPAIGNS, P_AUDIT],
+    "3 · Results": [P_ROI, P_CAMPAIGNS, P_AUDIT, P_PILOT],
 })
 
 with st.sidebar:

@@ -88,5 +88,16 @@ LLM_FALLBACKS: list[dict] = read_fallbacks()
 # ---- ROI telemetry (reporting assumptions only; never used for routing) ------------
 STAFF_MIN_PER_REVIEW: float = 5.0     # ASSUMPTION: minutes for the 2-person team to review one flagged item by hand
 STAFF_MIN_ASSISTED: float = 2.0       # ASSUMPTION: minutes for an escalated case with summary + evidence ready
-LLM_COST_PER_1M_INPUT = float(os.getenv("LLM_COST_PER_1M_INPUT", "0"))   # USD; set from provider pricing
+LLM_COST_PER_1M_INPUT = float(os.getenv("LLM_COST_PER_1M_INPUT", "0"))   # USD; for a model NOT in the table below
 LLM_COST_PER_1M_OUTPUT = float(os.getenv("LLM_COST_PER_1M_OUTPUT", "0"))
+# Published on-demand prices, USD per 1M tokens (input, output). Each AI call is priced by the model that answered.
+# Checked 21 Nov 2026 on console.groq.com/docs/models (qwen3.8-27b is a Groq "preview" model). Update on change.
+LLM_PRICES_PER_1M: dict[str, tuple[float, float]] = {
+    "openai/gpt-oss-120b": (0.15, 0.60),
+    "qwen/qwen3.8-27b": (0.80, 4.00),
+}
+LLM_PRICES_CHECKED = "21 Nov 2026 · console.groq.com/docs/models"
+
+# ---- Round 3 pilot sizing (deployment estimate only; never used for routing) -----------------------------------
+PILOT_FLAGGED_PER_DAY = 200          # from the brief: ~200 flagged payments a day reach the 2-person team
+PILOT_SCHOOL_DAYS_PER_MONTH = 22
