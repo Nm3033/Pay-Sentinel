@@ -735,7 +735,9 @@ def run_back_to_back(rows: list[dict], entered_by: str, *, use_llm: bool = True,
         try:
             valid, problems = services.validate_new_transactions([row])
             if problems:
-                res.update(status="failed", note=f"Refused at entry: {problems[0]['error']}. Nothing was saved.")
+                services.log_intake_rejections(problems, [row], entered_by)          # Round 3: logged, not lost
+                res.update(status="failed", note=f"Refused at entry: {problems[0]['error']}. Nothing was saved; "
+                                                 "the attempt is in the activity log.")
             else:
                 ids = services.add_transactions(valid, entered_by)[0]
                 case = run_case(ids["alert_id"], use_llm=use_llm, llm=llm, simulate_outage=simulate_outage)

@@ -152,6 +152,19 @@ student-facing message plus a downloadable decision report.
 - A "Safety evidence" filter in the Activity log that shows exactly these three cases, with a one-click export
   (this is the log-evidence deliverable).
 - **Checkpoint:** a test produces all three cases and finds a log entry for each.
+- ✅ **Done.**
+  - **Logging refused entries:** new log-only `Action.INTAKE_REJECTED`; `services.log_intake_rejections()` runs on
+    submit (single form, grid, CSV, split test, back-to-back runs) and stores a summary only.
+    `services.plain_intake_error()` turns raw errors into sentences, e.g. "Amount (AED) must be more than 0".
+  - **`src/evidence.py`** (pure, read-only): `classify()` sorts log entries into SAFE / PAUSED / BLOCKED; `EXPIRE`
+    counts as the safe default, and refused changes, hidden instructions and refused entries count as BLOCKED.
+    `evidence_markdown()` is the export; attack input is escaped so it stays inert text.
+    `safety_case_rows()` holds dataset-picked inputs for a live run.
+  - **App:** a "🛡️ Safety evidence" view in the Activity log with three counters, the newest entries per case, a table,
+    a ".md" and ".csv" export and "▶ Run the 3 safety cases live". Start page step 9 opens it.
+  - **Tests:** `tests/test_safety_evidence.py` (11). Suite: 199 passed.
+  - **Live check** with the real AI: RES-…084 canteen CLEAR; RES-…085 300 AED to a 14-day-old account HOLD;
+    RES-…086 hidden instructions removed → ESCALATE; RES-…087 `@<script>` row refused at entry. Took 12 s.
 
 ### Phase 4: Deployment reality (Area 4)
 - A "Pilot plan" page in the app plus `DEPLOYMENT.md`:

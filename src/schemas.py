@@ -64,6 +64,7 @@ class Action(str, Enum):
     GUARDIAN_APPROVE = "GUARDIAN_APPROVE"    # parent/guardian approves an under-16 transfer
     GUARDIAN_DECLINE = "GUARDIAN_DECLINE"    # parent/guardian declines it
     INVALID_REQUEST = "INVALID_REQUEST"      # LOG ONLY: an attempted action that is not allowed (never changes state)
+    INTAKE_REJECTED = "INTAKE_REJECTED"      # LOG ONLY: a new payment refused at entry (malformed/malicious); nothing saved
 
 
 # ---- Source records (each carries a citable record_id) ------------------------

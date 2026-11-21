@@ -606,6 +606,61 @@ def _blank(v) -> bool:
     return v is None or (isinstance(v, float) and v != v) or (isinstance(v, str) and not v.strip())
 
 
+_FIELD_LABEL = {"student_id": "Student", "amount_aed": "Amount (AED)", "txn_type": "Payment type", "channel": "How",
+                "recipient_handle": "Pay to (@handle)", "recipient_name": "Display name", "message": "Chat message",
+                "memo": "Payment note", "device": "Phone", "ts": "Time"}
+
+
+def plain_intake_error(err: dict) -> str:
+    """One pydantic error -> a sentence a staff member understands (Round 3: clear messages when input fails)."""
+    field = ".".join(map(str, err.get("loc", ()))) or "row"
+    label, kind, ctx = _FIELD_LABEL.get(field, field), err.get("type", ""), err.get("ctx") or {}
+    if field == "recipient_handle" and kind in ("string_pattern_mismatch", "value_error"):
+        return f"{label} must start with @ and use 3–30 lowercase letters, digits, _ . or -"
+    if field == "student_id" and kind == "string_pattern_mismatch":
+        return f"{label} must look like STU-0001"
+    if kind in ("greater_than", "greater_than_equal"):
+        return f"{label} must be more than {ctx.get('gt', ctx.get('ge', 0)):g}"
+    if kind in ("less_than_equal", "less_than"):
+        return f"{label} can be at most {ctx.get('le', ctx.get('lt')):g}"
+    if kind == "string_too_long":
+        return f"{label} is too long (at most {ctx.get('max_length')} characters)"
+    if kind == "missing":
+        return f"{label} is missing"
+    if kind in ("float_parsing", "float_type", "int_parsing"):
+        return f"{label} must be a number"
+    if kind == "literal_error":
+        return f"{label} must be one of: {ctx.get('expected', '')}"
+    if kind == "extra_forbidden":
+        return f"Unknown column {field}"
+    return f"{label}: {err.get('msg', 'invalid value')}"
+
+
+def _brief(v, n: int = 40) -> str:
+    """A short, inert summary of an untrusted value for the log (never the full text)."""
+    text = " ".join(str(v).split()) if v is not None else ""
+    return (text[:n] + "…") if len(text) > n else text
+
+
+def log_intake_rejections(errors: list[dict], rows: list[dict], entered_by: str, *,
+                          conn: sqlite3.Connection | None = None) -> int:
+    """Round 3: write every payment refused AT ENTRY to the activity log (nothing else is saved). Called when a
+    person actually submits, not while they are still typing. Stores a short summary, never the raw message."""
+    with _use(conn) as c:
+        for e in errors:
+            row = rows[e["row"] - 1] if 0 < e.get("row", 0) <= len(rows) else {}
+            what = ", ".join(f"{k}={_brief(row.get(k))!r}" for k in ("student_id", "amount_aed", "recipient_handle")
+                             if row.get(k) not in (None, ""))
+            c.execute("INSERT INTO case_resolutions (case_id, txn_id, action, from_state, to_state, actor, note, "
+                      "reasons, committed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                      ("INTAKE", "", Action.INTAKE_REJECTED.value, None, None, f"staff:{entered_by}",
+                       f"REJECTED: refused at entry ({e['error']}). Nothing was saved.",
+                       json.dumps([f"INTAKE_REJECTED: {e['error']}"] + ([f"input: {what}"] if what else [])),
+                       datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        c.commit()
+    return len(errors)
+
+
 def validate_new_transactions(rows: list[dict], *, conn: sqlite3.Connection | None = None
                               ) -> tuple[list[NewTransaction], list[dict]]:
     """Validate raw rows (any source). Returns (valid items, errors [{row, error}]); never writes."""
@@ -620,11 +675,10 @@ def validate_new_transactions(rows: list[dict], *, conn: sqlite3.Connection | No
         try:
             item = NewTransaction(**data)
         except ValidationError as e:
-            err = e.errors()[0]
-            errors.append(dict(row=i, error=f"{'.'.join(map(str, err['loc'])) or 'row'}: {err['msg']}"))
+            errors.append(dict(row=i, error=plain_intake_error(e.errors()[0])))
             continue
         if item.student_id not in students:
-            errors.append(dict(row=i, error=f"student_id: {item.student_id} does not exist"))
+            errors.append(dict(row=i, error=f"Student {item.student_id} doesn't exist"))
             continue
         valid.append(item)
     return valid, errors

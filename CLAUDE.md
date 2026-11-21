@@ -36,7 +36,8 @@ Track: IEEE CS SYP TechX Dubai '26, Domain 1 High School: *PocketPay Autonomous 
     `demo_scenarios.expected_route`) are never put in prompts. Only `src/telemetry.py`, the workflow CLI scorecard and
     `tests/` may read them.
 13. Console data entry (`validate_new_transactions` → `add_transactions`) validates every row, inserts atomically, stores
-    text raw (screened at triage), tags rows `manual:<staff>`, and leaves ground truth NULL.
+    text raw (screened at triage), tags rows `manual:<staff>`, and leaves ground truth NULL. Rows refused on submit are
+    logged as `INTAKE_REJECTED` (log-only, never a state change) with a short summary, never the raw message text.
 
 ## Conventions
 - Business logic lives in `src/`. `app.py` only renders and calls into `src/`.

@@ -639,7 +639,10 @@ def page_home() -> None:
              ("Spot scam campaigns", "One fake seller messaging many students, and a one-click warning broadcast.",
               "📣 Open scam alerts", lambda: st.switch_page(P_CAMPAIGNS)),
              ("Be the parent/guardian", f"Approve or decline a transfer above {config.GUARDIAN_LIMIT_AED:,.0f} AED by "
-              f"a student under {config.GUARDIAN_AGE}.", "👪 Open guardian app", lambda: st.switch_page(P_GUARDIAN))]
+              f"a student under {config.GUARDIAN_AGE}.", "👪 Open guardian app", lambda: st.switch_page(P_GUARDIAN)),
+             ("See the 3 safety cases", "A safe payment sent automatically, a risky one paused for a person and an "
+              "attack blocked, each backed by its activity-log entry.", "🛡️ Safety evidence",
+              lambda: (ss.__setitem__("audit_view", SAFETY_VIEW), st.switch_page(P_AUDIT)))]
     for i, (title, desc, btn, fn) in enumerate(tries, 1):
         with st.container(border=True):
             a, b = st.columns([4, 1.3], vertical_alignment="center")
@@ -1308,22 +1311,87 @@ ACTION_TEXT = {"CLEAR": "🟢 Cleared", "HOLD_FOR_CONFIRMATION": "🟡 Held for 
                "STUDENT_REPORT": "🚩 Student reported scam", "STAFF_RELEASE": "✅ Staff released",
                "STAFF_CANCEL": "↩️ Staff cancelled", "STAFF_ASK_STUDENT": "📱 Staff asked student", "EXPIRE": "⌛ Expired",
                "RELEASE": "✅ Sent after cancel window", "GUARDIAN_APPROVE": "👪 Guardian approved",
-               "GUARDIAN_DECLINE": "👪 Guardian declined", "INVALID_REQUEST": "❓ Unknown request"}
+               "GUARDIAN_DECLINE": "👪 Guardian declined", "INVALID_REQUEST": "❓ Unknown request",
+               "INTAKE_REJECTED": "🛡️ Refused at entry"}
+
+
+SAFETY_VIEW = "🛡️ Safety evidence"
+
+
+def _safety_evidence(recs) -> None:
+    """Round 3, Area 3: the three safety cases, each backed by real activity-log entries, plus the export."""
+    from src import evidence as EV
+    st.caption("Each case below is proven by a real entry in the activity log. The checks are fixed Python rules, "
+               "not the AI. Press the button to produce all three right now, live.")
+    if st.button("▶ Run the 3 safety cases live", type="primary", key="run_safety_cases",
+                 help="A canteen snack, a big transfer to a brand-new account, a scam whose message talks to the "
+                      "AI, and a row with a malicious @handle."):
+        ss.safety_btb = workflow.run_back_to_back(EV.safety_case_rows(), officer, **_ai(),
+                                                  simulate_outage=ss.get("outage", False))
+        refresh()
+        st.rerun()
+    ev = EV.evidence(recs)
+    keys = (EV.SAFE, EV.PAUSED, EV.BLOCKED)
+    m = st.columns(3)
+    for col, k, label in zip(m, keys, ("✅ Safe → automatic", "⏸️ Risky → paused", "🛡️ Attacks blocked")):
+        col.metric(label, len(ev[k]), border=True)
+    for k in keys:
+        icon, title, proves = EV.CASES[k]
+        with st.container(border=True):
+            st.markdown(f"##### {icon} {title}")
+            st.caption(proves)
+            if not ev[k]:
+                st.info("No log entry yet. Press **Run the 3 safety cases live**.", icon="📜")
+                continue
+            shown = []                                     # newest entry of each distinct kind, up to 3
+            for r in ev[k]:
+                kind = (r.action, r.note.startswith("REJECTED:"))
+                if kind not in [x[0] for x in shown]:
+                    shown.append((kind, r))
+                if len(shown) == 3:
+                    break
+            for _, r in shown:
+                st.markdown(f"- **{r.record_id}** · {r.committed_at:%d %b %H:%M:%S} UTC · "
+                            f"{r.txn_id or 'not saved'} · `{r.action.value}` by `{r.actor}`: {EV.what_happened(r)}")
+    rows = [dict(Case=EV.CASES[EV.classify(r)][1], Record=r.record_id, When=r.committed_at,
+                 Payment=r.txn_id or "(refused at entry)", Action=r.action.value, By=r.actor,
+                 What=EV.what_happened(r), Reasons="; ".join(r.reasons))
+            for k in keys for r in ev[k]]
+    if rows:
+        df = pd.DataFrame(rows)
+        st.dataframe(df, hide_index=True, width="stretch", height=300, column_config={
+            "When": st.column_config.DatetimeColumn(format="MMM D, HH:mm:ss"),
+            "Reasons": st.column_config.TextColumn(width="large")})
+        a, b = st.columns(2)
+        a.download_button("⬇️ Safety evidence (.md)", EV.evidence_markdown(recs), file_name="pay_sentinel_safety_evidence.md",
+                          type="primary", width="stretch", key="dl_evidence_md")
+        b.download_button("⬇️ Safety evidence (.csv)", df.to_csv(index=False), file_name="pay_sentinel_safety_evidence.csv",
+                          width="stretch", key="dl_evidence_csv")
 
 
 def page_audit() -> None:
     hero("Activity log", "Every action ever taken on a payment: what happened, when, and who did it.")
     how_to("<b>system</b> = an automatic step by the fixed rules. <b>student:…</b>, <b>guardian:…</b> and "
            "<b>staff:…</b> = a person's decision. ⛔ = an attempt the rules <b>refused</b> (e.g. cancelling after the "
-           "window closed); nothing changed, but it is still recorded. Turn on <b>Show details</b> for the reasons.")
+           "window closed, or a payment refused at entry); nothing changed, but it is still recorded. "
+           f"<b>{SAFETY_VIEW}</b> shows the three Round 3 safety cases and exports them.")
     recs = services.list_resolutions()
+    ss.setdefault("audit_view", "All")
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+    view = c1.segmented_control("Show", ["All", "Human decisions", "Automatic", "⛔ Refused", SAFETY_VIEW],
+                                key="audit_view") or "All"
+    details = c2.toggle("Show details")
+    if view == SAFETY_VIEW:
+        _safety_evidence(recs)
+        return
     if not recs:
         st.info("Nothing recorded yet. Check some payments first.", icon="📜")
         return
+
     def _st(x) -> str:
         return x.value if x else "new"
 
-    full = pd.DataFrame([dict(When=r.committed_at, Payment=r.txn_id,
+    full = pd.DataFrame([dict(When=r.committed_at, Payment=r.txn_id or "(refused at entry)",
                               Action=("⛔ Refused: " if r.note.startswith("REJECTED:") else "")
                               + ACTION_TEXT.get(r.action.value, r.action.value),
                               Change=f"{_st(r.from_state)} → {_st(r.to_state)}",
@@ -1334,11 +1402,9 @@ def page_audit() -> None:
     m[0].metric("Steps recorded", len(full), border=True)
     m[1].metric("Human decisions", int(((full["By"] != "system") & ~refused).sum()), border=True)
     m[2].metric("Refused attempts", int(refused.sum()), border=True,
-                help="Changes the rules didn't allow (wrong person, wrong time, unknown action). Logged, not applied.")
+                help="Changes the rules didn't allow (wrong person, wrong time, unknown action) and payments refused "
+                     "at entry. Logged, not applied.")
     m[3].metric("Wallets frozen", 0, border=True, help="Not possible: there is no freeze action")
-    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    view = c1.segmented_control("Show", ["All", "Human decisions", "Automatic", "⛔ Refused"], default="All") or "All"
-    details = c2.toggle("Show details")
     if view == "⛔ Refused":
         df = full[refused]
     elif view == "All":
@@ -1435,7 +1501,7 @@ def _workload_rows(students: list[dict], n: int, broken: bool) -> list[dict]:
     good = [ex["Canteen snack"], ex["Ticket scam (from the brief)"], ex["Unclear slang"], dyn["Lookalike shop"],
             dyn["Scam that talks to the AI"]]
     rows = [dict(g) for g in good[: n - (1 if broken else 0)]]
-    if broken:   # negative amount and a handle without "@": refused at entry, the run carries on
+    if broken:   # a negative amount: refused at entry (and logged), the run carries on
         rows.insert(min(2, len(rows)), dict(student_id=good[0]["student_id"], amount_aed=-5.0, txn_type="P2P",
                                             channel="APP", recipient_handle="campus canteen", recipient_name="",
                                             message="", memo="", device="known"))
@@ -1510,7 +1576,9 @@ def _curveballs(students: list[dict]) -> None:
                                  recipient_handle="@campus_canteen", memo="lunch", ts=now + timedelta(seconds=1)))
             valid, errors = services.validate_new_transactions(rows)
             if errors:
-                st.error(f"Please fix: {errors[0]['error']}", icon="⚠️")
+                services.log_intake_rejections(errors, rows, officer)
+                st.error(f"Refused: {errors[0]['error']}. Nothing was saved; the attempt is in the activity log.",
+                         icon="🛡️")
             else:
                 _import(valid, True)
 
@@ -1538,6 +1606,7 @@ def _import(items, triage: bool) -> None:
 
 
 def _validation_summary(rows: list[dict]):
+    """Preview while typing (nothing is logged here); returns (valid items, problems)."""
     valid, errors = services.validate_new_transactions(rows)
     a, b = st.columns(2)
     a.metric("✅ Ready to import", len(valid), border=True)
@@ -1545,7 +1614,7 @@ def _validation_summary(rows: list[dict]):
     if errors:
         st.dataframe(pd.DataFrame(errors).rename(columns={"row": "Row", "error": "Problem"}),
                      hide_index=True, width="stretch")
-    return valid
+    return valid, errors
 
 
 def page_add() -> None:
@@ -1616,7 +1685,9 @@ def page_add() -> None:
                            recipient_name=rname, message=msg, memo=memo, device=device)
                 valid, errors = services.validate_new_transactions([raw])
                 if errors:
-                    st.error(f"Please fix: {errors[0]['error']}", icon="⚠️")
+                    services.log_intake_rejections(errors, [raw], officer)
+                    st.error(f"Refused: {errors[0]['error']}. Nothing was saved; the attempt is in the activity log.",
+                             icon="🛡️")
                 else:
                     _import(valid, triage)
 
@@ -1634,10 +1705,12 @@ def page_add() -> None:
             "recipient_handle": "Pay to (@handle)", "recipient_name": "Display name",
             "message": st.column_config.TextColumn("Chat message", width="large"),
             "memo": "Note", "device": st.column_config.SelectboxColumn("Phone", options=["known", "new"])})
-        valid = _validation_summary(_rows_from(edited))
+        grid_rows = _rows_from(edited)
+        valid, problems = _validation_summary(grid_rows)
         a, b = st.columns([1, 2], vertical_alignment="center")
         triage = b.checkbox(f"Check them straight away (up to {TRIAGE_NOW_MAX} rows)", value=True, key="grid_triage")
         if a.button(f"➕ Import {len(valid)} row(s)", type="primary", disabled=not valid, width="stretch"):
+            services.log_intake_rejections(problems, grid_rows, officer)   # refused rows: logged, not lost
             ss.grid_ver += 1
             _import(valid, triage)
 
@@ -1664,7 +1737,8 @@ def page_add() -> None:
                 return
             st.markdown("**Preview** (first 10 rows)")
             st.dataframe(cdf.head(10), hide_index=True, width="stretch")
-            valid = _validation_summary(_rows_from(cdf))
+            csv_rows = _rows_from(cdf)
+            valid, problems = _validation_summary(csv_rows)
             done = ss.get("csv_imported") == digest
             if done:
                 st.info("This file has already been imported.", icon="ℹ️")
@@ -1672,6 +1746,7 @@ def page_add() -> None:
             triage = b.checkbox(f"Check them straight away (up to {TRIAGE_NOW_MAX} rows)", value=True, key="csv_triage")
             if a.button(f"➕ Import {len(valid)} row(s)", type="primary", disabled=not valid or done, width="stretch"):
                 ss.csv_imported = digest
+                services.log_intake_rejections(problems, csv_rows, officer)
                 _import(valid, triage)
 
 
@@ -1684,12 +1759,13 @@ P_GUARDIAN = st.Page(page_guardian, title=f"Guardian app ({len(GUARDIAN_Q)})", i
 P_GATE = st.Page(page_gate, title=f"Staff review ({pending})", icon="🧑‍💼", url_path="staff-review")
 P_ADD = st.Page(page_add, title="Add payments", icon="➕", url_path="add")
 P_ROI = st.Page(page_roi, title="Results", icon="📊", url_path="results")
+P_AUDIT = st.Page(page_audit, title="Activity log", icon="📜", url_path="activity-log")
 P_CAMPAIGNS = st.Page(page_campaigns, title="Scam alerts", icon="📣", url_path="scam-alerts")
 nav = st.navigation({
     "": [P_HOME],
     "1 · Check payments": [P_QUEUE, P_INVESTIGATE, P_ADD],
     "2 · People decide": [P_STUDENT, P_GUARDIAN, P_GATE],
-    "3 · Results": [P_ROI, P_CAMPAIGNS, st.Page(page_audit, title="Activity log", icon="📜", url_path="activity-log")],
+    "3 · Results": [P_ROI, P_CAMPAIGNS, P_AUDIT],
 })
 
 with st.sidebar:
