@@ -43,3 +43,5 @@ Track: IEEE CS SYP TechX Dubai '26, Domain 1 High School: *PocketPay Autonomous 
 - Never write dataset rows by hand or paste them in chat. Change `src/seed_data.py` instead.
 - Keep `.env` out of git and commit only `.env.example`. Don't log API keys.
 - Add tests with the code they cover. `pytest` must pass before each checkpoint.
+- Tests never call a real AI provider: `tests/conftest.py` blocks it. Use `tests/fakes.py`, or monkeypatch
+  `src.llm.get_llm` to return fakes.

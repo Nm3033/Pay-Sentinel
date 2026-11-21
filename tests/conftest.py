@@ -25,6 +25,17 @@ def _never_touch_real_data(officer_passwords, db_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", db_path)
 
 
+@pytest.fixture(autouse=True)
+def _never_call_real_ai(monkeypatch):
+    """Safety net: no test may reach a real AI provider (cost, quota, flaky network). Tests use tests/fakes.py;
+    any real chat call fails loudly instead of silently spending the team's API quota."""
+    from openai.resources.chat.completions import Completions
+
+    def blocked(*a, **kw):
+        raise RuntimeError("tests must not call a real AI provider; use tests/fakes.py")
+    monkeypatch.setattr(Completions, "create", blocked)
+
+
 @pytest.fixture
 def officer_token(officer_passwords):
     return auth.login("SUP-01", officer_passwords["SUP-01"])

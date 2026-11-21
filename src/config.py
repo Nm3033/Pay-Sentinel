@@ -59,6 +59,9 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
 LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "60"))
+# Round 3 resilience: time budget for checking ONE payment. AI calls get only the time that is left; once it runs
+# out, the remaining AI steps are skipped and the fixed rules finish the check (never a less careful route).
+CASE_TIME_LIMIT_S = float(os.getenv("CASE_TIME_LIMIT_S", "20"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))  # generous: reasoning models spend hidden tokens
 # "" = don't send. Defaults to "low" for gpt-oss models (fast, cheap); ignored by most other providers.
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low" if "gpt-oss" in LLM_MODEL else "")

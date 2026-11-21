@@ -24,6 +24,16 @@ T = TypeVar("T", bound=BaseModel)
 USAGE_SINK: ContextVar[list | None] = ContextVar("usage_sink", default=None)
 
 
+# Round 3: the deadline (time.monotonic()) for the payment being checked; set per case by workflow.run_case().
+CASE_DEADLINE: ContextVar[float | None] = ContextVar("case_deadline", default=None)
+
+
+def time_left() -> float | None:
+    """Seconds left for the current payment's check, or None when no limit is set."""
+    d = CASE_DEADLINE.get()
+    return None if d is None else d - time.monotonic()
+
+
 def record_usage(entry: dict) -> None:
     sink = USAGE_SINK.get()
     if sink is not None:
@@ -75,6 +85,7 @@ class LLMClient:
         from openai import OpenAI  # imported lazily so code-only paths/tests don't need it
 
         self.model = model
+        self.timeout = timeout
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
         self._json_mode = True
@@ -96,9 +107,13 @@ class LLMClient:
         if wait > 0:   # quota exhausted earlier: don't hammer the API, fail fast so the case falls back to code
             raise LLMError(f"AI quota exhausted; retry in {wait / 60:.0f} min")
         for attempt in range(self.rate_limit_retries + 1):
+            left = time_left()
+            if left is not None and left <= 0.5:
+                raise LLMError(f"time limit reached ({config.CASE_TIME_LIMIT_S:.0f} s for this payment)")
+            client = self._client if left is None else self._client.with_options(timeout=min(self.timeout, left))
             t0 = time.perf_counter()
             try:
-                resp = self._client.chat.completions.create(**kwargs)
+                resp = client.chat.completions.create(**kwargs)
             except openai.RateLimitError as e:
                 retry_after = _retry_after_seconds(e)
                 if retry_after > MAX_RATE_LIMIT_WAIT_S:   # e.g. daily token quota: waiting won't help this batch
@@ -106,7 +121,11 @@ class LLMClient:
                     raise LLMError(f"rate limited for {retry_after / 60:.0f} min: {e}") from e
                 if attempt >= self.rate_limit_retries:
                     raise LLMError(f"rate limited: {e}") from e
-                time.sleep(max(retry_after, 2 ** (attempt + 1)))
+                pause = max(retry_after, 2 ** (attempt + 1))
+                left = time_left()
+                if left is not None and pause >= left - 0.5:   # waiting would blow this payment's time limit
+                    raise LLMError(f"rate limited, and waiting {pause:.0f} s would pass the time limit: {e}") from e
+                time.sleep(pause)
                 continue
             except openai.BadRequestError as e:
                 msg = str(e).lower()
@@ -172,6 +191,10 @@ class FallbackLLM:
     def chat_json(self, system: str, user: str, model_cls: type[T], *, purpose: str = "") -> T:
         failed: list[str] = []
         for client in self.clients:
+            left = time_left()
+            if left is not None and left <= 0.5:
+                failed.append(f"time limit reached ({config.CASE_TIME_LIMIT_S:.0f} s for this payment)")
+                break
             wait = getattr(client, "_blocked_until", 0.0) - time.time()
             if wait > 0:
                 failed.append(f"{client.model} (rate-limited, retry in {wait / 60:.0f} min)")
@@ -199,3 +222,27 @@ def get_llm() -> FallbackLLM:
         clients.append(LLMClient(base_url=fb["base_url"], model=fb["model"], api_key=fb["api_key"],
                                  reasoning_effort=fb["reasoning_effort"], rate_limit_retries=3 if last else 1))
     return FallbackLLM(clients)
+
+
+# ---- Round 3: simulated outages for the live demo (never on by default) -------------------------------------
+class DownClient:
+    """Stands in for an AI provider that is down: every call fails at once, like a dead endpoint."""
+
+    def __init__(self, model: str):
+        self.model = model
+        self.usage_log: list[dict] = []
+        self._blocked_until = 0.0
+
+    def chat_json(self, system: str, user: str, model_cls: type[T], *, purpose: str = "") -> T:
+        raise LLMError(f"simulated outage: {self.model} is not responding")
+
+
+def with_simulated_outage(llm, mode: str):
+    """mode "primary": the main AI is down, so the backups must take over. "all": every AI is down, so the fixed
+    rules do everything. Anything else returns `llm` unchanged. Works on a FallbackLLM or a single client."""
+    clients = list(getattr(llm, "clients", [llm]))
+    if mode == "primary":
+        return FallbackLLM([DownClient(clients[0].model)] + clients[1:])
+    if mode == "all":
+        return FallbackLLM([DownClient(c.model) for c in clients])
+    return llm

@@ -17,6 +17,7 @@ import json
 import re
 import sqlite3
 import sys
+import time
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
@@ -286,6 +287,51 @@ def _answered_by(usage: list[dict]) -> str:
     return f" (answered by backup AI {last.get('model', 'AI')}: {names} unavailable)"
 
 
+def explain_problem(text: str) -> str:
+    """Round 3: turn a technical failure into one plain sentence saying what Pay Sentinel did instead."""
+    t = (text or "").lower()
+    if ("429" in t or "rate limit" in t) and "would pass the time limit" in t:
+        return ("The AI service's rate limit was reached and waiting for it would have taken too long, so the fixed "
+                "rules finished this part. The decision is not affected.")
+    if "time limit" in t:
+        return (f"Checking took longer than {config.CASE_TIME_LIMIT_S:.0f} seconds, so the remaining AI steps were "
+                "skipped and the fixed rules finished the check.")
+    if "simulated outage" in t and "all ai providers unavailable" in t:
+        return "Every AI was switched off for this test (simulated outage), so the fixed rules did this part."
+    if "429" in t or "rate limit" in t or "rate-limit" in t or "quota" in t:
+        return ("The AI service's free-tier rate limit was reached, so the fixed rules did this part. "
+                "The decision is not affected.")
+    if "simulated outage" in t:
+        return "The AI was switched off for this test (simulated outage), so the fixed rules did this part."
+    if "verificationtimeout" in t or "recipient directory" in t:
+        return ("The campus recipient directory didn't respond in time, so the payment was paused for a person "
+                "instead of guessing.")
+    if "timeout" in t or "timed out" in t or "connection" in t or "apistatuserror" in t:
+        return "The AI service was slow or unreachable, so the fixed rules did this part."
+    if "llm init" in t:
+        return "The AI couldn't start, so the fixed rules checked this payment."
+    if "all ai providers unavailable" in t:
+        return "No AI was available, so the fixed rules did this part."
+    return "One check had a problem, so Pay Sentinel stayed on the careful side."
+
+
+def resilience_notices(case: CaseFile, usage: list[dict]) -> list[str]:
+    """Every slowdown or failure in this check, in plain words (deduplicated, in the order they happened)."""
+    out: list[str] = []
+    for u in usage:                                    # a backup AI answered because the one before it failed
+        failed = u.get("after_failures")
+        if failed:
+            names = ", ".join(f.split(" (")[0] for f in failed)
+            why = " (simulated outage)" if any("simulated outage" in f for f in failed) else ""
+            out.append(f"The main AI ({names}) didn't answer{why}, so the backup AI ({u.get('model', 'backup')}) "
+                       "took over.")
+    for s in (case.chat, case.memo):
+        if s is not None and s.agent_verdict == "UNAVAILABLE":
+            out.append(explain_problem(s.agent_reason))
+    out += [explain_problem(e) for e in case.errors]
+    return list(dict.fromkeys(out))
+
+
 def _route_action(r: Route) -> Action:
     return {Route.CLEAR: Action.CLEAR, Route.HOLD_FOR_CONFIRMATION: Action.HOLD_FOR_CONFIRMATION,
             Route.ESCALATE: Action.ESCALATE}[r]
@@ -294,13 +340,14 @@ def _route_action(r: Route) -> Action:
 def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Connection | None = None,
              commit: bool = True, save: bool = True, simulate_outage: bool = False,
              progress: Callable[[str], object] | None = None) -> CaseFile:
-    from src.llm import USAGE_SINK
+    from src.llm import CASE_DEADLINE, USAGE_SINK
 
     own = conn is None
     conn = conn or services.connect()
     token = _progress.set(progress)
     usage: list[dict] = []                      # this case's own AI usage (safe when cases run in parallel)
     usage_token = USAGE_SINK.set(usage)
+    deadline_token = CASE_DEADLINE.set(time.monotonic() + config.CASE_TIME_LIMIT_S)   # Round 3: per-payment limit
     try:
         case = load_case(alert_id, conn)
         case.checked_at = datetime.now()
@@ -386,6 +433,10 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
                 _step(case, "[LLM ] AI explanation writer unavailable; a standard explanation is used instead.")
         if use_llm:
             case.llm_usage = list(usage)
+        case.notices = resilience_notices(case, usage)
+        if any("longer than" in n for n in case.notices):
+            _step(case, f"[CODE] Time limit of {config.CASE_TIME_LIMIT_S:.0f} s reached: the remaining AI steps were "
+                        "skipped and the fixed rules finished the check (never a less careful decision).")
 
         # 7. final decision (AI can only make it more careful)
         case.final_route = route(case.gate.route, llm_route)
@@ -413,6 +464,7 @@ def run_case(alert_id: str, *, use_llm: bool = True, llm=None, conn: sqlite3.Con
     finally:
         _progress.reset(token)
         USAGE_SINK.reset(usage_token)
+        CASE_DEADLINE.reset(deadline_token)
         if own:
             conn.close()
 
@@ -656,6 +708,44 @@ def triage_many(alert_ids: list[str], *, workers: int = DEFAULT_WORKERS, use_llm
             if on_done:
                 on_done(a, results.get(a), err, n, len(todo))
     return [results[a] for a in todo if a in results], errors
+
+
+def run_back_to_back(rows: list[dict], entered_by: str, *, use_llm: bool = True, llm=None,
+                     simulate_outage: bool = False,
+                     on_update: Callable[[list[dict]], object] | None = None) -> list[dict]:
+    """Round 3, Area 2: enter and check several payments ONE AFTER ANOTHER, like a short burst of real traffic.
+
+    Each row goes through the normal console path (validate -> add_transactions -> run_case). A row that fails
+    (refused at entry, or an unexpected error) is marked failed with a plain reason and the run carries on.
+    on_update(results) is called on the calling thread after every status change, for a live table.
+    Returns one dict per row: n, status (waiting/checking/done/failed), alert_id, route, state, seconds, note."""
+    results = [dict(n=i, status="waiting", alert_id="", route="", state="", seconds=None, note="",
+                    amount_aed=r.get("amount_aed"), recipient_handle=r.get("recipient_handle", ""))
+               for i, r in enumerate(rows, 1)]
+
+    def tell():
+        if on_update:
+            on_update([dict(r) for r in results])
+
+    tell()
+    for row, res in zip(rows, results):
+        res["status"] = "checking"
+        tell()
+        t0 = time.perf_counter()
+        try:
+            valid, problems = services.validate_new_transactions([row])
+            if problems:
+                res.update(status="failed", note=f"Refused at entry: {problems[0]['error']}. Nothing was saved.")
+            else:
+                ids = services.add_transactions(valid, entered_by)[0]
+                case = run_case(ids["alert_id"], use_llm=use_llm, llm=llm, simulate_outage=simulate_outage)
+                res.update(status="done", alert_id=ids["alert_id"], route=case.final_route.value,
+                           state=case.state.value if case.state else "", note=" ".join(case.notices))
+        except Exception as e:  # noqa: BLE001 - one bad input must never stop the run
+            res.update(status="failed", note=f"Unexpected problem ({type(e).__name__}); skipped, the others carry on.")
+        res["seconds"] = round(time.perf_counter() - t0, 2)
+        tell()
+    return results
 
 
 # ---- CLI ---------------------------------------------------------------------------------------

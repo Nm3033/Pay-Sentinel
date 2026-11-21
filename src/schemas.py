@@ -326,6 +326,7 @@ class CaseFile(Strict):
     resolution: ResolutionRecord | None = None
     report_markdown: str | None = None
     errors: list[str] = []
+    notices: list[str] = []        # Round 3: plain-language "what went wrong and what we did instead" for people
     trace: list[str] = []          # plain-language decision log for the UI / audit trail
     llm_usage: list[dict] = []     # per-call tokens & latency (telemetry)
     checked_at: datetime | None = None   # when Pay Sentinel last checked this payment

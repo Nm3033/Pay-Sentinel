@@ -121,6 +121,24 @@ student-facing message plus a downloadable decision report.
 - One input in the batch deliberately fails (malformed or outage). It gets a clear error and the others still finish.
 - **Judges see:** several inputs processed in a row, plus at least one failure handled gracefully.
 - **Checkpoint:** tests show a forced primary failure uses the fallback, and a batch with one bad input completes the rest.
+- ✅ **Done.**
+  - **Time limit:** `config.CASE_TIME_LIMIT_S` (20 s) bounds each payment's check. `src/llm.py` gives each AI call only
+    the time left, skips calls once time is up and never sleeps past it on a rate limit; the rules then finish.
+  - **Failure test:** `with_simulated_outage(llm, "primary" | "all")` backs the sidebar's "AI provider (failure test)",
+    which applies to every check. A "🧪 Failure test on" warning stays visible in the sidebar.
+  - **Plain messages:** `workflow.explain_problem()` and `resilience_notices()` produce `CaseFile.notices`, shown under
+    the decision; raw errors sit behind "Technical details".
+  - **Workload test:** `workflow.run_back_to_back()` backs the "⚡ Workload test" on Add payments: 3–5 sample inputs
+    one after another, a live status table, one broken input placed third, and "what went wrong and how it was handled".
+  - **Tests:** `tests/test_resilience.py` (9). New `conftest.py` safety net: no test can call a real AI provider.
+    Suite: 188 passed.
+  - **Live check** with the main AI switched off: the real backup (`qwen/qwen3.8-27b`) answered for 3 payments, the
+    broken row was refused at entry, and #5 hit Groq's per-minute rate limit and was finished by the rules in 16 s,
+    with a clear note. 4/5 checked in 22 s.
+  - **For Phase 4 / the stage:** the backup is on the same provider (Groq), so one rate limit can hit both. A backup on
+    a different provider (e.g. Gemini) would be more resilient. Avoid back-to-back rehearsals right before going on.
+  - **For Phase 3:** the refused-at-entry reason is still technical ("amount_aed: Input should be greater than 0");
+    make it plain and log it.
 
 ### Phase 3: Safety and accountability, three logged cases (Area 3)
 1. **Safe → automatic:** AED 15 at the Campus Canteen → `CLEARED` by `system`.

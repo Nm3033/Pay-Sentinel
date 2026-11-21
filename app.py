@@ -443,10 +443,25 @@ def state_text(alert_id: str) -> str:
             "ESCALATE": STATE_TEXT["ESCALATED"]}[c.final_route.value]
 
 
+AI_MODES = {"normal": "Normal", "primary": "Main AI down (backup takes over)", "all": "Every AI down (rules only)"}
+
+
+def _ai() -> dict:
+    """use_llm / llm for a check, honouring the sidebar's AI test switch (Round 3 resilience demo)."""
+    use = ss.get("use_llm", True)
+    mode = ss.get("ai_mode", "normal")
+    if not use or mode == "normal":
+        return dict(use_llm=use)
+    from src.llm import get_llm, with_simulated_outage
+    try:
+        return dict(use_llm=True, llm=with_simulated_outage(get_llm(), mode))
+    except Exception:  # noqa: BLE001 - no AI configured at all: the fixed rules check it anyway
+        return dict(use_llm=False)
+
+
 def run_one(alert_id: str) -> CaseFile:
     with st.status(f"Checking {alert_id}…", expanded=True) as status:
-        case = workflow.run_case(alert_id, use_llm=ss.get("use_llm", True),
-                                 simulate_outage=ss.get("outage", False),
+        case = workflow.run_case(alert_id, **_ai(), simulate_outage=ss.get("outage", False),
                                  progress=lambda m: status.markdown(trace_html([m]), unsafe_allow_html=True))
         status.update(label=f"{alert_id} → {ROUTE_PILL[case.final_route.value][2]}", state="complete",
                       expanded=False)
@@ -471,7 +486,7 @@ def triage_alerts(alert_ids: list[str], *, rerun: bool = True) -> None:
         bar.progress(done / total, text=f"{done}/{total} done · last: {alert_id} → {label}")
 
     t0 = time.perf_counter()
-    done_cases, errors = workflow.triage_many(todo, workers=workers, use_llm=ss.get("use_llm", True),
+    done_cases, errors = workflow.triage_many(todo, workers=workers, **_ai(),
                                               simulate_outage=ss.get("outage", False), on_done=on_done)
     ss.last_batch = dict(n=len(done_cases), skipped=len(todo) - len(done_cases) - len(errors), errors=errors,
                          tally=tally, seconds=round(time.perf_counter() - t0, 1), workers=workers)
@@ -748,13 +763,16 @@ def render_case(c: CaseFile) -> None:
         b.caption(f"{'Purchase' if t.txn_type == 'PURCHASE' else 'Transfer to a student'} · {t.channel} · "
                   f"{t.ts:%d %b, %H:%M} · {t.record_id}")
 
+    for note in c.notices or [workflow.explain_problem(e) for e in c.errors]:   # older case files: no notices
+        st.warning(note, icon="🛟")
     t_steps, t_msg, t_ev, t_rep = st.tabs(["📖 Step by step", "💬 The message", "🔍 Evidence & rules", "📄 Full report"])
     with t_steps:
         st.caption("Every step, in order. Tags show who did it: **CODE** = fixed rules · **AI** = language model "
                    "(reads and writes only) · **HUMAN** = the student or support staff.")
         st.markdown(trace_html(c.trace), unsafe_allow_html=True)
-        for e in c.errors:
-            st.warning(f"A check had a problem, so the payment was paused instead of guessing: {e}", icon="⚠️")
+        if c.errors:
+            with st.expander("Technical details of the problems above"):
+                st.code("\n".join(c.errors), language=None, wrap_lines=True)
     with t_msg:
         if c.chat is None and c.memo is None:
             st.info("No message or note came with this payment, so there was nothing to read.", icon="💬")
@@ -1408,6 +1426,66 @@ def _dynamic_examples(students: list[dict]) -> dict:
     return out
 
 
+_BTB_STATUS = {"waiting": "⏳ Waiting", "checking": "🔄 Checking…", "done": "✅ Done", "failed": "❌ Failed"}
+
+
+def _workload_rows(students: list[dict], n: int, broken: bool) -> list[dict]:
+    """The approved sample inputs (same as the example buttons), plus one broken row placed third if asked."""
+    ex, dyn = _examples(students), _dynamic_examples(students)
+    good = [ex["Canteen snack"], ex["Ticket scam (from the brief)"], ex["Unclear slang"], dyn["Lookalike shop"],
+            dyn["Scam that talks to the AI"]]
+    rows = [dict(g) for g in good[: n - (1 if broken else 0)]]
+    if broken:   # negative amount and a handle without "@": refused at entry, the run carries on
+        rows.insert(min(2, len(rows)), dict(student_id=good[0]["student_id"], amount_aed=-5.0, txn_type="P2P",
+                                            channel="APP", recipient_handle="campus canteen", recipient_name="",
+                                            message="", memo="", device="known"))
+    return rows
+
+
+def _btb_table(res: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "#": r["n"], "Payment": f"{r['amount_aed']} AED → {r['recipient_handle'] or '?'}",
+        "Status": _BTB_STATUS[r["status"]],
+        "Decision": f"{DECISION_INFO[r['route']][0]} {DECISION_INFO[r['route']][1]}" if r["route"] else "",
+        "Time (s)": r["seconds"], "Alert": r["alert_id"], "What happened": r["note"]} for r in res])
+
+
+def _workload_test(students: list[dict]) -> None:
+    """Round 3, Area 2: a short burst of payments, one after another, with a live status table."""
+    with st.expander("⚡ Workload test: several payments back to back", expanded=bool(ss.get("btb_last"))):
+        a, b = st.columns([1, 2], vertical_alignment="bottom")
+        n = a.slider("How many", 3, 5, 5, key="btb_n")
+        broken = b.checkbox("Include one broken input (shows a failure handled safely)", value=True, key="btb_broken")
+        ai = AI_MODES[ss.get("ai_mode", "normal")] if ss.get("use_llm", True) else "off (rules only)"
+        st.caption(f"Each payment is entered, checked and decided before the next one starts. AI: **{ai}**"
+                   f"{' · verification outage: **on**' if ss.get('outage') else ''}. To show a failure being "
+                   f"handled, switch on a failure test in the sidebar under ⚙️ More tools. Every check has a "
+                   f"{config.CASE_TIME_LIMIT_S:.0f}-second time limit.")
+        go = st.button("⚡ Run them back to back", type="primary", key="btb_go")
+        table = st.empty()
+        if go:
+            ss.btb_last = workflow.run_back_to_back(
+                _workload_rows(students, int(n), broken), officer, **_ai(), simulate_outage=ss.get("outage", False),
+                on_update=lambda r: table.dataframe(_btb_table(r), hide_index=True, width="stretch"))
+            refresh()
+            st.rerun()
+        last = ss.get("btb_last")
+        if last:
+            table.dataframe(_btb_table(last), hide_index=True, width="stretch", column_config={
+                "#": st.column_config.NumberColumn(width=40), "Time (s)": st.column_config.NumberColumn(width=70),
+                "Decision": st.column_config.TextColumn(width=150), "Alert": st.column_config.TextColumn(width=95),
+                "What happened": st.column_config.TextColumn(width="medium")})   # full text is listed below
+            ok, bad = sum(r["status"] == "done" for r in last), sum(r["status"] == "failed" for r in last)
+            secs = sum(r["seconds"] or 0 for r in last)
+            msg = (f"{ok} of {len(last)} payments checked in {secs:.1f} s"
+                   + (f"; {bad} failed safely and the run carried on." if bad else "."))
+            (st.warning if bad else st.success)(msg, icon="⚡")
+            handled = [(r["n"], r["note"]) for r in last if r["note"]]
+            if handled:
+                st.markdown("**What went wrong, and how it was handled**\n\n"
+                            + "\n".join(f"- **#{n}:** {note}" for n, note in handled))
+
+
 def _curveballs(students: list[dict]) -> None:
     """One-click rehearsal of the split-payment test. Everything is still editable in the form below."""
     with st.expander("🧩 Split-payment test (many small transfers in a few minutes)"):
@@ -1452,7 +1530,7 @@ def _import(items, triage: bool) -> None:
     if triage and len(out) <= TRIAGE_NOW_MAX:
         bar = st.progress(0.0, text="Checking new payments…")
         for i, o in enumerate(out, 1):
-            workflow.run_case(o["alert_id"], use_llm=ss.get("use_llm", True), simulate_outage=ss.get("outage", False))
+            workflow.run_case(o["alert_id"], **_ai(), simulate_outage=ss.get("outage", False))
             bar.progress(i / len(out), text=f"{o['alert_id']} ({i}/{len(out)})")
     ss.last_import = dict(rows=out, triaged=triage and len(out) <= TRIAGE_NOW_MAX)
     refresh()
@@ -1501,6 +1579,7 @@ def page_add() -> None:
                      [["Handle", "Name", "Kind", "Verified shop"]], hide_index=True, width="stretch", height=240)
         st.caption("Any other handle is an unknown account. Handles that imitate a verified shop (e.g. an extra "
                    "“_”, a 0 for an o, a dot) are treated as high risk.")
+    _workload_test(students)
     _curveballs(students)
     t_one, t_grid, t_csv = st.tabs(["✏️ Single payment", "📋 Bulk: type in a table", "📤 Bulk: upload CSV"])
 
@@ -1624,6 +1703,10 @@ with st.sidebar:
         ss.selected_alert = None
         st.rerun()
     st.caption("🌗 Light or dark mode: ⋮ menu (top right) → Light / Dark / System")
+    tests_on = ([AI_MODES[ss.ai_mode]] if ss.get("use_llm", True) and ss.get("ai_mode", "normal") != "normal" else []) \
+        + (["verification outage"] if ss.get("outage") else [])
+    if tests_on:
+        st.warning("🧪 Failure test on: " + ", ".join(tests_on) + ". Turn it off under ⚙️ More tools.")
     st.write("")
     if st.button("▶ Run 12 test scenarios", type="primary", width="stretch",
                  help="Snacks, the Front Row Fest scam, fake PocketPay messages, 3 unclear-slang cases, an attack "
@@ -1642,8 +1725,13 @@ with st.sidebar:
     with st.expander("⚙️ More tools"):
         ss.use_llm = st.toggle("Use AI agents", value=ss.get("use_llm", True),
                                help="Off = rules only (message scanners + fixed payment rules), no AI reading.")
-        ss.outage = st.toggle("Simulate verification outage", value=ss.get("outage", False),
-                              help="verify_campus_recipient() times out: payments pause safely instead of crashing.")
+        ss.setdefault("ai_mode", "normal")
+        st.selectbox("AI provider (failure test)", list(AI_MODES), format_func=AI_MODES.get, key="ai_mode",
+                     help="Make the main AI, or every AI, fail on purpose. The backup AI takes over, or "
+                          "the fixed rules finish the check; decisions are never less careful.")
+        ss.setdefault("outage", False)
+        st.toggle("Simulate verification outage", key="outage",
+                  help="verify_campus_recipient() times out: payments pause safely instead of crashing.")
         ss.workers = st.slider("Payments checked at the same time", 1, workflow.MAX_WORKERS,
                                value=ss.get("workers", workflow.DEFAULT_WORKERS),
                                help="Checks run in parallel; AI calls dominate the time, so more at once is faster. "
