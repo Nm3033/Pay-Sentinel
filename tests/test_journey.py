@@ -164,6 +164,29 @@ def test_app_journey_from_typed_payment_to_outcome(conn, officer_passwords):
     assert any("Sent to the student" in s.value and "still in your wallet" in s.value for s in at.success)
 
 
+def test_staff_action_after_hand_off_hits_the_handed_payment_only(conn, officer_passwords):
+    """Regression (found in the Round 3 rehearsal): with TWO payments waiting for staff, the hand-off opened the
+    right one, but the click's rerun reset the dropdown to the first payment, so Cancel hit the WRONG payment."""
+    from tests.test_curveballs import _app
+    scam = dict(amount_aed=50, channel="LINK", recipient_handle="@campus_tix_99",
+                message="Bro urgent! Selling my Front Row Fest pass, click here! frontrow-fest.co/claim")
+    first = typed(conn, student_id=quiet_student(conn), **scam)
+    second = typed(conn, student_id=quiet_student(conn), **scam)
+    for ids in (first, second):
+        workflow.run_case(ids["alert_id"], use_llm=False, conn=conn)
+    at = _app(officer_passwords)
+    at.session_state["gate_pick"] = second["alert_id"]                      # what "Review as support staff" does
+    at.session_state["journey_return"] = second["alert_id"]
+    at.button(key="try4").click().run()                                     # Start page → Staff review
+    assert not at.exception, at.exception
+    assert at.selectbox(key="gate_sel").value == second["alert_id"]
+    at.button(key="STAFF_CANCEL").click().run()
+    assert not at.exception, at.exception
+    state = lambda ids: services.get_payment_state(ids["txn_id"], conn=conn).state   # noqa: E731
+    assert state(second) == PaymentState.CANCELLED                          # the handed-over payment
+    assert state(first) == PaymentState.ESCALATED                           # untouched
+
+
 def test_who_names_every_actor():
     assert who("student:STU-0004") == "Student STU-0004" and who("staff:SUP-01") == "Support staff SUP-01"
     assert who("guardian:GRD-0001") == "Parent/guardian GRD-0001" and who("system") == "Pay Sentinel (automatic)"

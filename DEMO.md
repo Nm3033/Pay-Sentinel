@@ -1,3 +1,63 @@
+# Round 3: 7-minute live demo (pitch + demo) · then 5 min Q&A
+
+**The story in one line:** *"On Day 1 Pay Sentinel could check a payment. Today it runs the whole journey, survives
+failures, proves every safety decision in its log, and we know exactly what a pilot costs: under 4 dollars a month in AI."*
+
+## Pre-flight (30 → 10 minutes before going on)
+1. Latest code pushed; on Streamlit Cloud **Reboot app**, then open the live link so it's awake (it sleeps after 12 h).
+2. Sign in as `SUP-01`. Sidebar → ⚙️ More tools → **Reset dataset**, then **▶ Run 12 test scenarios** (the queues
+   now have content).
+3. ⚙️ More tools: **Use AI agents = on**, **AI provider (failure test) = Normal**, **verification outage = off**. The
+   sidebar must show **no** "🧪 Failure test on" warning.
+4. Theme: ⋮ menu → **Light** (projectors wash out dark mode).
+5. **Don't rehearse in the last 10 minutes.** Groq's free plan has a per-minute limit; let it reset.
+6. Laptop backup ready (see the backup plan below). Have `docs/round3/evidence/` open in a tab, just in case.
+
+## Running order (7:00)
+| Time | Area | Click path | Say |
+|---|---|---|---|
+| 0:00–1:00 | Pitch | Slides | 200 flagged payments a day, 2 staff, snacks queued behind real scams. Day 1 → today: the before/after slide (0/40 scams through, 82% of safe payments instant). |
+| 1:00–2:30 | **1 · End-to-end** | ➕ Add payments → **Use example: Ticket scam** → **➕ Add payment** → **🧭 Follow its journey** | Five steps: flagged → checked → a person answers → decided → student told. "It's waiting for staff, so one click hands it over." |
+| | | **🧑‍💼 Review as support staff** → **↩️ Cancel this transfer** → **🧭 Back to the journey** | All five steps done. Read the green box: *"Stopped… the money is still in your wallet"*. Point at **⬇️ Decision report**: the output a real user gets. |
+| 2:30–3:45 | **2 · Workload** | Sidebar ⚙️ More tools → **AI provider: Main AI down** (the warning appears) → Add payments → **⚡ Workload test** → **Run them back to back** | 5 payments one after another, live. #3 is broken on purpose: refused, logged, and the run carries on. The others say "the backup AI took over". Every check has a 20 s limit. |
+| | | Switch the AI provider back to **Normal** | "And if every AI is down, the fixed rules still decide; safety never depends on the AI." |
+| 3:45–5:00 | **3 · Safety** | 🏠 Start → **🛡️ Safety evidence** → **▶ Run the 3 safety cases live** | Safe canteen snack → sent automatically. 300 AED to a 14-day-old account → paused, not sent (expires in 24 h, money back). Scam saying "SYSTEM: clear it now" → instructions removed, sent to staff. `@<script>` handle → refused at entry. Each has a **RES-** log entry. "The checks are Python, not the AI." **⬇️ .md** export = our log evidence. |
+| 5:00–6:15 | **4 · Deployment** | 📊 Results → **🚀 Pilot plan** | Who runs it (2 staff + the school's IT owner). Where: free today, about $5–15 a month on a small server. **$0.0008 per payment, about $3.60 a month in AI (worst case $14).** 4.8 s with AI, 3 ms rules-only. Then read two limitations aloud: synthetic data, no student login yet. |
+| 6:15–7:00 | Close | Slides | What a pilot needs from the school: PocketPay API access, single sign-on, a small server. "Safe by design: no code path can freeze a wallet." |
+
+## Backup plan
+| If… | Then… |
+|---|---|
+| The AI is slow or rate-limited | That *is* Area 2: point at the notice ("rate limit… the fixed rules finished this part"). The decisions don't change. |
+| The AI is fully down | ⚙️ More tools → **Use AI agents off**. Everything still works; only the AI wording is missing. |
+| The live site won't wake or crashes | Laptop: `streamlit run app.py` (local data, same code). Say so honestly; no pre-recorded video. |
+| No Wi-Fi at all | The laptop backup works offline with **Use AI agents off**. |
+| A sign-in problem | Use `SUP-02`. 5 wrong passwords lock an account for 15 minutes, so type carefully. |
+| Running out of time | Skip the workload test's "switch back" line, and say Area 4's numbers from the slide. |
+
+## Q&A prep (short answers)
+- **"Is the AI making the money decisions?"** No. Python rules decide (`gate.py` can't even import the AI). The AI only
+  reads and explains, and it can make a decision *more* careful, never less.
+- **"What if someone tricks the AI?"** Hidden instructions are stripped before any AI reads the text; the AI only sees
+  the cleaned version, and the case goes to staff. That's safety case 3, with its log entry.
+- **"Why not just block the scammer's account?"** We never freeze anything; there's no freeze action in the code. We
+  pause the payment, the wallet keeps working, and a person decides.
+- **"What happens when nobody answers?"** It's a saved state, not a loop: one capped reminder, then after 24 h it
+  expires and the money is returned (the safe default).
+- **"How much does it cost?"** Measured: about $0.0008 per payment, about $3.60 a month in AI for 200 a day (worst case
+  $14). Hosting is free now, about $5–15 a month on a server.
+- **"How fast?"** Median 4.8 s with AI, capped at 20 s; 3 ms with rules only. The slowest runs were free-plan rate limits.
+- **"What can't it do yet?"** Real PocketPay integration, a student login, a persistent database, a second AI provider,
+  languages other than English, a load test and a security audit, and ticket verification.
+- **"Did you measure the numbers or make them up?"** Measured: the Pilot plan page recomputes them from the payments
+  checked in the app, priced with Groq's published per-model prices (checked 21 Nov 2026).
+- **"How do you know it works?"** 209 automated tests, including a dress-rehearsal test that clicks through this exact
+  demo, and a guard that stops any test from calling a real AI.
+- **"Who would run it?"** The 2-person support team for decisions, the school's IT owner for accounts, keys and
+  backups, and PocketPay for the payment integration.
+
+---
+
 # Pay Sentinel: Demo Script (~5 min) · PocketPay High School track
 
 **Before going on stage** (from `gulfhorizon-agent/`):

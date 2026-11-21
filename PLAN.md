@@ -210,6 +210,17 @@ student-facing message plus a downloadable decision report.
 - A 7-minute live demo script in `DEMO.md`, in the order Areas 1 → 2 → 3 → 4, plus Q&A prep.
 - Backup plan: if Wi-Fi or the AI fails on stage, the rules-only path keeps working, which itself demonstrates Area 2.
 - **Checkpoint:** a full rehearsal on the live link, timed under 7 minutes.
+- ✅ **Built** (the team still needs to push, reboot, rehearse on the live link and make the deck PDF).
+  - **README:** "Round 3: where to see each part live", the new files, 209 tests.
+  - **`DEMO.md`:** the Round 3 7-minute running order with exact clicks, pre-flight, backup plan and Q&A prep.
+  - **`docs/round3/DECK.md`:** slide content for the official template.
+  - **`docs/round3/evidence/`:** a backup copy of the log evidence (screenshot, .md, .csv), from a fresh run with the
+    real AI. The submitted copy should come from the live site.
+  - **`tests/test_round3_demo.py`:** a dress rehearsal that clicks the whole stage path in order. Suite: 209 passed.
+  - **Bug found by the rehearsal (in since Phase 1):** after a journey hand-off, clicking a staff button re-ran the
+    page with a changed `index`, so Streamlit reset the dropdown to the FIRST payment and the decision could hit the
+    wrong payment. The staff and student dropdowns are now keyed (`gate_sel`, `student_sel`). Regression test:
+    `test_staff_action_after_hand_off_hits_the_handed_payment_only`; it fails on the old code.
 
 Priority if time runs short (the round is on 21 Nov 2026): Phase 0 → 3 (the log evidence is a required deliverable)
 → 2 → 1 → 4 (can be mostly the doc and the page) → 5.

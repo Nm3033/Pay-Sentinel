@@ -953,8 +953,14 @@ def page_student() -> None:
     if not order:
         st.info("No payments have been checked yet. Run the 12 test scenarios or add a payment first.", icon="📭")
         return
+    # A keyed dropdown keeps its choice across reruns. (An `index` that changes between runs makes Streamlit treat it
+    # as a new widget and silently jump back to the first entry, so a click would act on the wrong student.)
     pick = ss.pop("student_pick", None)          # handed over from a payment's journey
-    sid = st.selectbox("Student", order, index=order.index(pick) if pick in order else 0, format_func=lambda s: (
+    if pick in order:
+        ss.student_sel = pick
+    elif ss.get("student_sel") not in order:
+        ss.pop("student_sel", None)
+    sid = st.selectbox("Student", order, key="student_sel", format_func=lambda s: (
         f"{'🔔 ' if s in active else ''}{s} · {students[s]['full_name']} ({students[s]['grade']}, age "
         f"{students[s]['age']})" if s in students else s))
     mine = sorted(by_student[sid], key=lambda c: c.transaction.ts, reverse=True)
@@ -1075,9 +1081,14 @@ def page_gate() -> None:
             return f"{tag} · {a} · {c0.transaction.amount_aed:,.2f} AED to {c0.transaction.recipient_handle}"
 
         waiting = [c.alert.record_id for c in STAFF_Q]
+        # Keyed so the choice survives reruns: staff buttons act on `pick`, so it must never silently reset to the
+        # first payment (it did when a changing `index` made Streamlit treat the dropdown as new).
         handed = ss.pop("gate_pick", None)        # handed over from a payment's journey
-        pick = st.selectbox(f"Escalated payment ({pending} waiting)", waiting,
-                            index=waiting.index(handed) if handed in waiting else 0, format_func=case_label)
+        if handed in waiting:
+            ss.gate_sel = handed
+        elif ss.get("gate_sel") not in waiting:   # decided meanwhile, or never chosen: start at the top
+            ss.pop("gate_sel", None)
+        pick = st.selectbox(f"Escalated payment ({pending} waiting)", waiting, key="gate_sel", format_func=case_label)
         c = cases[pick]
         with st.container(border=True):
             h = st.columns(4)
