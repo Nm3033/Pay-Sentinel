@@ -84,6 +84,27 @@ def test_the_plan_is_honest_and_complete():
         assert must in text
 
 
+def test_code_update_reloads_cached_payments(conn, officer_passwords, monkeypatch):
+    """Regression (live site, Phase 4): Streamlit Cloud applied a push inside the running server, the cache handed
+    back CaseFiles pickled by the OLD code, and the Pilot plan page crashed with "'CaseFile' object has no attribute
+    'ai_on'". The cache key now includes the code version, so a code update always reloads them."""
+    import src
+    from tests.test_curveballs import _app
+    workflow.run_case(scam_alert(conn), use_llm=False, conn=conn)
+    calls = []
+    real = workflow.list_saved_cases
+    monkeypatch.setattr(workflow, "list_saved_cases", lambda: calls.append(1) or real())
+    monkeypatch.setattr(src, "source_stamp", lambda: 111)
+    at = _app(officer_passwords)
+    first = len(calls)
+    at.run()
+    assert len(calls) == first                      # same code: served from the cache
+    monkeypatch.setattr(src, "source_stamp", lambda: 222)                 # a push lands in the running server
+    at.run()
+    assert not at.exception, at.exception
+    assert len(calls) == first + 1                  # reloaded with the new code, no stale objects
+
+
 def test_app_pilot_page(conn, officer_passwords, monkeypatch):
     import src.llm
     monkeypatch.setattr(src.llm, "get_llm", lambda: FallbackLLM([Named(MAIN)]))   # never a real provider

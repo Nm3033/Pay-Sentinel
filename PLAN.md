@@ -184,6 +184,24 @@ student-facing message plus a downloadable decision report.
     - no ticket-ownership verification
 - **Judges see:** a short breakdown with numbers computed from today's run.
 - **Checkpoint:** the page renders and its numbers come from telemetry, not hard-coded values.
+- ✅ **Done.**
+  - **Prices:** `config.LLM_PRICES_PER_1M` holds per-model prices (gpt-oss-120b 0.15/0.60, qwen3.8-27b 0.80/4.00 USD
+    per 1M tokens, checked 21 Nov 2026 on console.groq.com/docs/models). Every AI call is priced by the model that
+    answered, and the Results page cost is no longer "n/a".
+  - **Measured per check:** `CaseFile.check_seconds` and `ai_on`.
+  - **`src/pilot.py`:** `estimate()` scales measured checks to `PILOT_FLAGGED_PER_DAY` × `PILOT_SCHOOL_DAYS_PER_MONTH`
+    and includes a worst case. `WHO`, `WHERE`, `LIMITATIONS` and `MONITORING` are shared by the page and the doc.
+  - **App and doc:** a "🚀 Pilot plan" page (Results group, Start page step 10) and `DEPLOYMENT.md`.
+  - **Tests:** `tests/test_pilot.py` (7). Suite: 206 passed.
+  - **Measured** (12 scenarios with AI, one at a time, plus 188 rules-only):
+    - USD 0.00082 per payment, 0.16 a day, 3.62 a month (worst case 14.04)
+    - 4.8 s median with AI (slowest 17.9 s, caused by free-plan rate limits; capped at 20 s); 3 ms rules only
+    - about 15 staff hours a day saved (assumption-based)
+    - 33 AI calls: 29 main, 4 backup after rate limits
+  - **Live-site fix:** Pilot plan crashed with "'CaseFile' object has no attribute 'ai_on'". Streamlit Cloud applied
+    the push inside the running server, and `st.cache_data` returned CaseFiles pickled by the old code, which lack
+    the new fields. `data_version()` now includes `src.source_stamp()`, so any code update reloads cached data.
+    Regression test: `test_code_update_reloads_cached_payments`.
 
 ### Phase 5: Deliverables and rehearsal
 - Push and reboot the cloud app; update the README run steps (updated working link).

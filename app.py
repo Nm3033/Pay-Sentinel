@@ -39,7 +39,7 @@ if sys.modules.get("src") is not None and getattr(sys.modules["src"], "_loaded_s
     for _name in [m for m in sys.modules if m == "src" or m.startswith("src.")]:
         del sys.modules[_name]
 
-from src import auth, config, seed_data, services, workflow  # noqa: E402
+from src import auth, config, seed_data, services, source_stamp, workflow  # noqa: E402
 from src.gate import REASON_TEXT, plain_reasons
 from src.graph import (OUTCOME_LABEL, campaign_dot, campaign_verdict, case_outcome, detect_scam_campaigns)
 from src.journey import build_journey
@@ -227,15 +227,17 @@ def refresh() -> None:
 
 
 def data_version() -> tuple:
-    """Cache key shared by ALL sessions: changes whenever the database or saved case files change,
-    so no viewer (or a reloaded tab) ever sees stale data from another session's cache."""
+    """Cache key shared by ALL sessions: changes whenever the CODE, the database or the saved case files change, so
+    no viewer (or a reloaded tab) ever sees stale data from another session's cache. The code version matters:
+    Streamlit Cloud applies a push inside the running server, and objects cached by the old code would come back
+    without the new fields (e.g. "'CaseFile' object has no attribute 'ai_on'")."""
     def mtime(p) -> int:
         try:
             return Path(p).stat().st_mtime_ns
         except OSError:
             return 0
     files = list(workflow.CASES_DIR.glob("*.json")) if workflow.CASES_DIR.exists() else []
-    return (mtime(config.DB_PATH), len(files), max((mtime(f) for f in files), default=0))
+    return (source_stamp(), mtime(config.DB_PATH), len(files), max((mtime(f) for f in files), default=0))
 
 
 def pill(route: str) -> str:
